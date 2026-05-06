@@ -1,1 +1,1 @@
-# VIO-study
+# scene-aware-vio
