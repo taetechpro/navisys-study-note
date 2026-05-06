@@ -1,0 +1,58 @@
+# KITTI raw template.
+# Replace the dataset path and both T_cam_imu matrices with sequence-specific calibration
+# before running. The stereo intrinsics below are only an example placeholder.
+
+dataset_type: "kitti_raw"
+dataset: "/mnt/d/datasets/KITTI/2011_09_26_drive_0001_sync"
+output:  "/mnt/d/02_research/05_cpp_LC-EKF_VIO/results/kitti_raw"
+max_frames: 0
+
+init:
+  mode: "stationary_imu"
+  static_window_sec: 1.0
+  gravity_norm: 9.81
+
+imu_noise:
+  gyro:       1.6968e-4
+  accel:      2.0000e-3
+  gyro_walk:  1.9393e-5
+  accel_walk: 3.0000e-3
+
+ekf:
+  sigma_vo: 0.10
+
+cam0:
+  width: 1241
+  height: 376
+  fx: 718.856
+  fy: 718.856
+  cx: 607.1928
+  cy: 185.2157
+  k1: 0.0
+  k2: 0.0
+  p1: 0.0
+  p2: 0.0
+  # Placeholder only. Replace with KITTI calibration for your sequence.
+  T_cam_imu:
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+
+cam1:
+  width: 1241
+  height: 376
+  fx: 718.856
+  fy: 718.856
+  cx: 607.1928
+  cy: 185.2157
+  k1: 0.0
+  k2: 0.0
+  p1: 0.0
+  p2: 0.0
+  # Placeholder only. Replace with KITTI calibration for your sequence.
+  T_cam_imu:
+    - [1.0, 0.0, 0.0, -0.54]
+    - [0.0, 1.0, 0.0,  0.0 ]
+    - [0.0, 0.0, 1.0,  0.0 ]
+    - [0.0, 0.0, 0.0,  1.0 ]

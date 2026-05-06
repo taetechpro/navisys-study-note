@@ -1,0 +1,45 @@
+# Build outputs
+build/
+build_*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Local datasets and generated outputs
+data/
+results/
+logs/
+logs./
+
+# Generated visualization / binary artifacts
+*.rrd
+*.ply
+*.bin
+
+# LaTeX build artifacts
+docs/build/
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fls
+*.fdb_latexmk
+*.log
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Python/cache/editor files
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+.vscode/
+.idea/
+
+# Agent-local state
+.claude/

@@ -1,0 +1,55 @@
+# EuRoC V1_01_easy calibration (matches official OpenVINS config)
+
+dataset_type: "euroc"
+dataset: "/mnt/d/05_agent/codex_ver/OpenVINS/experiments/datasets/euroc/V1_01_easy"
+output:  "/mnt/d/02_research/05_cpp_LC-EKF_VIO/results/v101"
+max_frames: 0   # 0 = all frames
+
+init:
+  mode: "stationary_imu"
+  static_window_sec: 1.0
+  gravity_norm: 9.81
+
+imu_noise:
+  gyro:       1.6968e-4   # [rad/s/sqrt(Hz)]
+  accel:      2.0000e-3   # [m/s^2/sqrt(Hz)]
+  gyro_walk:  1.9393e-5   # [rad/s^2/sqrt(Hz)]
+  accel_walk: 3.0000e-3   # [m/s^3/sqrt(Hz)]
+
+ekf:
+  sigma_vo: 0.05          # VO measurement noise [m]  (smaller = trust VO more)
+
+cam0:
+  width: 752
+  height: 480
+  fx: 458.654
+  fy: 457.296
+  cx: 367.215
+  cy: 248.375
+  k1: -0.28340811
+  k2:  0.07395907
+  p1:  0.00019359
+  p2:  1.76187114e-05
+  # T_cam_imu: T_CI (maps IMU-frame points → cam0-frame points)
+  T_cam_imu:
+    - [ 0.0148655429818, -0.999880929698,  0.00414029679422, -0.0216401454975]
+    - [ 0.999557249008,   0.0149672133247,  0.025715529948,  -0.064676986768 ]
+    - [-0.0257744366974,  0.00375618835797, 0.999660727178,   0.00981073058949]
+    - [ 0.0,              0.0,              0.0,              1.0             ]
+
+cam1:
+  width: 752
+  height: 480
+  fx: 457.587
+  fy: 456.134
+  cx: 379.999
+  cy: 255.238
+  k1: -0.28368365
+  k2:  0.07451284
+  p1: -0.00010473
+  p2: -3.5105e-05
+  T_cam_imu:
+    - [ 0.0217522692,  -0.9999272080,  0.0073572780,  -0.0640411387]
+    - [ 0.9999755430,   0.0217721732, -0.0021562202,  -0.0644030838]
+    - [ 0.0020202392,   0.0072929632,  0.9999727650,   0.0098018287]
+    - [ 0.0,            0.0,           0.0,            1.0         ]

@@ -1,0 +1,160 @@
+# Quick commands from PowerShell
+
+## Normal build
+
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake --build build -j$(nproc)'
+
+## Run EuRoC V2_02_medium
+
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build/run_vio config/euroc_v202.yaml'
+
+# Expected output:
+#   Frames processed : 2348
+#   ATE RMSE         : about 59 cm
+#   Output           : results/euroc_v202
+
+## Run EuRoC V2_02_medium IMU-only
+
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build/run_vio config/euroc_v202_imuonly.yaml'
+
+# Check metrics:
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cat results/euroc_v202_imuonly/metrics.txt'
+
+# Compare normal VIO vs IMU-only:
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cat results/euroc_v202/metrics.txt && cat results/euroc_v202_imuonly/metrics.txt'
+
+## Plot result
+
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && python3 tools/plot_trajectory.py results/euroc_v202'
+
+## Rerun build
+
+# Use a fresh build dir if build_rerun has an old CMakeCache from another repo path.
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake -S . -B build_rerun_v202 -DCMAKE_BUILD_TYPE=Release -DENABLE_RERUN=ON && cmake --build build_rerun_v202 -j$(nproc)'
+
+## Record Rerun file
+
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_rerun_v202/run_vio config/euroc_v202.yaml --rerun-save results/euroc_v202/euroc_v202_unified_time.rrd --rerun-image-every 10'
+
+## Record Rerun file for IMU-only
+
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_rerun_v202/run_vio config/euroc_v202_imuonly.yaml --rerun-save results/euroc_v202_imuonly/euroc_v202_imuonly.rrd --rerun-image-every 10'
+
+## Open Rerun file
+
+rerun D:\02_research\04_cpp_LC-EKF_VIO\results\euroc_v202\euroc_v202_unified_time.rrd
+
+## Open IMU-only Rerun file
+
+rerun D:\02_research\04_cpp_LC-EKF_VIO\results\euroc_v202_imuonly\euroc_v202_imuonly.rrd
+
+## If rerun command is the wrong Python package
+
+python -m pip uninstall -y rerun
+python -m pip install --force-reinstall rerun-sdk==0.30.2
+rerun --version
+
+## Useful Rerun checks
+
+rerun rrd stats D:\02_research\04_cpp_LC-EKF_VIO\results\euroc_v202\euroc_v202_unified_time.rrd
+
+# Viewer tips:
+# - Use the "time" timeline. It is timestamp - first_camera_timestamp.
+# - Image entity: /camera/left_rectified
+# - Feature entity: /camera/left_rectified/tracked_features
+# - Trajectory entities:
+#     /world/trajectory_est_aligned
+#     /world/trajectory_gt
+# - If a view is blank, use Reset view / Fit / Focus selected.
+
+## KITTI LiDAR floor/wall segmentation build
+
+# Fresh non-Rerun build. Use this if build/ has an old CMakeCache from another repo path.
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake -S . -B build_verify -DCMAKE_BUILD_TYPE=Release && cmake --build build_verify -j$(nproc)'
+
+# Fresh Rerun-enabled build.
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake -S . -B build_verify_rerun -DCMAKE_BUILD_TYPE=Release -DENABLE_RERUN=ON && cmake --build build_verify_rerun -j$(nproc)'
+
+## Run KITTI LiDAR segmentation without Rerun
+
+# Output:
+#   trajectory/state/metrics files in the config output directory
+#   colored PLY files in <output>/lidar_segments/*.ply
+#
+# Options:
+#   --segment-lidar      enable Velodyne floor/left/right/front wall segmentation
+#   --segment-every N    segment every Nth camera/LiDAR frame
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify/run_vio config/kitti_raw_2011_09_26_drive_0117.yaml --segment-lidar --segment-every 10'
+
+# If config/kitti_raw_2011_09_26_drive_0117.yaml still points to the old /06_cpp... path,
+# either update dataset/output in the yaml to /mnt/d/02_research/04_cpp_LC-EKF_VIO,
+# or run with a temporary patched config:
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify/run_vio <(sed -e "s#/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw#/mnt/d/02_research/04_cpp_LC-EKF_VIO#g" config/kitti_raw_2011_09_26_drive_0117.yaml) --segment-lidar --segment-every 10'
+
+## Record KITTI LiDAR segmentation to Rerun
+
+# Rerun entities:
+#   /lidar/segments                         colored 3D point cloud
+#   /metrics/lidar_floor_points
+#   /metrics/lidar_left_wall_points
+#   /metrics/lidar_right_wall_points
+#   /metrics/lidar_front_wall_points
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify_rerun/run_vio config/kitti_raw_2011_09_26_drive_0117.yaml --segment-lidar --segment-every 10 --rerun-save results/kitti_raw_2011_09_26_drive_0117/lidar_segments.rrd --rerun-image-every 10'
+
+# Same command with temporary config path patch:
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify_rerun/run_vio <(sed -e "s#/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw#/mnt/d/02_research/04_cpp_LC-EKF_VIO#g" config/kitti_raw_2011_09_26_drive_0117.yaml) --segment-lidar --segment-every 10 --rerun-save results/kitti_raw_2011_09_26_drive_0117/lidar_segments.rrd --rerun-image-every 10'
+
+## Open KITTI LiDAR segmentation Rerun file
+
+rerun D:\02_research\04_cpp_LC-EKF_VIO\results\kitti_raw_2011_09_26_drive_0117\lidar_segments.rrd
+
+# Useful Rerun checks:
+rerun rrd stats D:\02_research\04_cpp_LC-EKF_VIO\results\kitti_raw_2011_09_26_drive_0117\lidar_segments.rrd
+
+# KITTI segmentation viewer tips:
+# - Use the "time" timeline.
+# - Select /lidar/segments and use Fit / Focus selected if the 3D view is blank.
+# - Colors:
+#     floor      = green
+#     left_wall  = blue
+#     right_wall = orange
+#     front_wall = pink
+#     other      = gray
+
+## Apply KITTI LiDAR segmentation to your own collected data
+
+# Current run_vio expects a KITTI-like stereo/IMU/LiDAR dataset.
+# Recommended converted layout:
+#   data/my_dataset/my_drive_sync/
+#     image_00/timestamps.txt
+#     image_00/data/0000000000.png
+#     image_01/timestamps.txt
+#     image_01/data/0000000000.png
+#     oxts/timestamps.txt
+#     oxts/data/0000000000.txt
+#     velodyne_points/data/0000000000.bin
+#
+# LiDAR .bin format:
+#   little-endian float32 x, y, z, intensity
+#   x forward, y left, z up, unit = meter
+#
+# Important:
+# - Velodyne frames are matched by the same index as camera frames.
+# - If your sensor uses a different axis convention, convert it before writing .bin.
+# - For LiDAR-only logs, add a small LiDAR-only executable around LidarSegmenter.
+
+# Copy an existing KITTI config and edit dataset/output/calibration:
+Copy-Item D:\02_research\04_cpp_LC-EKF_VIO\config\kitti_raw_2011_09_26_drive_0117_local_max_frame.yaml D:\02_research\04_cpp_LC-EKF_VIO\config\my_drive.yaml
+
+# Then edit config/my_drive.yaml:
+#   dataset_type: "kitti_raw"
+#   dataset: "/mnt/d/02_research/04_cpp_LC-EKF_VIO/data/my_dataset/my_drive_sync"
+#   output:  "/mnt/d/02_research/04_cpp_LC-EKF_VIO/results/my_drive"
+#   max_frames: 0
+#   cam0/cam1 intrinsics and T_cam_imu: replace with your calibration
+
+# Run your converted dataset:
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && mkdir -p results/my_drive && ./build_verify_rerun/run_vio config/my_drive.yaml --segment-lidar --segment-every 1 --rerun-save results/my_drive/lidar_segments.rrd --rerun-image-every 10'
+
+# Open your result:
+rerun D:\02_research\04_cpp_LC-EKF_VIO\results\my_drive\lidar_segments.rrd
