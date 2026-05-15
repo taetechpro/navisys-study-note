@@ -2,11 +2,11 @@
 
 ## Normal build
 
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake --build build -j$(nproc)'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && cmake --build build -j$(nproc)'
 
 ## Run EuRoC V2_02_medium
 
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build/run_vio config/euroc_v202.yaml'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build/run_vio config/euroc_v202.yaml'
 
 # Expected output:
 #   Frames processed : 2348
@@ -15,38 +15,38 @@ wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build/run_vio config/
 
 ## Run EuRoC V2_02_medium IMU-only
 
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build/run_vio config/euroc_v202_imuonly.yaml'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build/run_vio config/euroc_v202_imuonly.yaml'
 
 # Check metrics:
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cat results/euroc_v202_imuonly/metrics.txt'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && cat results/euroc_v202_imuonly/metrics.txt'
 
 # Compare normal VIO vs IMU-only:
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cat results/euroc_v202/metrics.txt && cat results/euroc_v202_imuonly/metrics.txt'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && cat results/euroc_v202/metrics.txt && cat results/euroc_v202_imuonly/metrics.txt'
 
 ## Plot result
 
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && python3 tools/plot_trajectory.py results/euroc_v202'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && python3 tools/plot_trajectory.py results/euroc_v202'
 
 ## Rerun build
 
 # Use a fresh build dir if build_rerun has an old CMakeCache from another repo path.
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake -S . -B build_rerun_v202 -DCMAKE_BUILD_TYPE=Release -DENABLE_RERUN=ON && cmake --build build_rerun_v202 -j$(nproc)'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && cmake -S . -B build_rerun_v202 -DCMAKE_BUILD_TYPE=Release -DENABLE_RERUN=ON && cmake --build build_rerun_v202 -j$(nproc)'
 
 ## Record Rerun file
 
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_rerun_v202/run_vio config/euroc_v202.yaml --rerun-save results/euroc_v202/euroc_v202_unified_time.rrd --rerun-image-every 10'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_rerun_v202/run_vio config/euroc_v202.yaml --rerun-save results/euroc_v202/euroc_v202_unified_time.rrd --rerun-image-every 10'
 
 ## Record Rerun file for IMU-only
 
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_rerun_v202/run_vio config/euroc_v202_imuonly.yaml --rerun-save results/euroc_v202_imuonly/euroc_v202_imuonly.rrd --rerun-image-every 10'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_rerun_v202/run_vio config/euroc_v202_imuonly.yaml --rerun-save results/euroc_v202_imuonly/euroc_v202_imuonly.rrd --rerun-image-every 10'
 
 ## Open Rerun file
 
-rerun D:\02_research\04_cpp_LC-EKF_VIO\results\euroc_v202\euroc_v202_unified_time.rrd
+rerun D:\02_research\04_cpp_seg_msckf_vio\results\euroc_v202\euroc_v202_unified_time.rrd
 
 ## Open IMU-only Rerun file
 
-rerun D:\02_research\04_cpp_LC-EKF_VIO\results\euroc_v202_imuonly\euroc_v202_imuonly.rrd
+rerun D:\02_research\04_cpp_seg_msckf_vio\results\euroc_v202_imuonly\euroc_v202_imuonly.rrd
 
 ## If rerun command is the wrong Python package
 
@@ -56,7 +56,7 @@ rerun --version
 
 ## Useful Rerun checks
 
-rerun rrd stats D:\02_research\04_cpp_LC-EKF_VIO\results\euroc_v202\euroc_v202_unified_time.rrd
+rerun rrd stats D:\02_research\04_cpp_seg_msckf_vio\results\euroc_v202\euroc_v202_unified_time.rrd
 
 # Viewer tips:
 # - Use the "time" timeline. It is timestamp - first_camera_timestamp.
@@ -70,10 +70,10 @@ rerun rrd stats D:\02_research\04_cpp_LC-EKF_VIO\results\euroc_v202\euroc_v202_u
 ## KITTI LiDAR floor/wall segmentation build
 
 # Fresh non-Rerun build. Use this if build/ has an old CMakeCache from another repo path.
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake -S . -B build_verify -DCMAKE_BUILD_TYPE=Release && cmake --build build_verify -j$(nproc)'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && cmake -S . -B build_verify -DCMAKE_BUILD_TYPE=Release && cmake --build build_verify -j$(nproc)'
 
 # Fresh Rerun-enabled build.
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake -S . -B build_verify_rerun -DCMAKE_BUILD_TYPE=Release -DENABLE_RERUN=ON && cmake --build build_verify_rerun -j$(nproc)'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && cmake -S . -B build_verify_rerun -DCMAKE_BUILD_TYPE=Release -DENABLE_RERUN=ON && cmake --build build_verify_rerun -j$(nproc)'
 
 ## Run KITTI LiDAR segmentation without Rerun
 
@@ -84,12 +84,12 @@ wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && cmake -S . -B build_ver
 # Options:
 #   --segment-lidar      enable Velodyne floor/left/right/front wall segmentation
 #   --segment-every N    segment every Nth camera/LiDAR frame
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify/run_vio config/kitti_raw_2011_09_26_drive_0117.yaml --segment-lidar --segment-every 10'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_verify/run_vio config/kitti_raw_2011_09_26_drive_0117.yaml --segment-lidar --segment-every 10'
 
 # If config/kitti_raw_2011_09_26_drive_0117.yaml still points to the old /06_cpp... path,
-# either update dataset/output in the yaml to /mnt/d/02_research/04_cpp_LC-EKF_VIO,
+# either update dataset/output in the yaml to /mnt/d/02_research/04_cpp_seg_msckf_vio,
 # or run with a temporary patched config:
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify/run_vio <(sed -e "s#/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw#/mnt/d/02_research/04_cpp_LC-EKF_VIO#g" config/kitti_raw_2011_09_26_drive_0117.yaml) --segment-lidar --segment-every 10'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_verify/run_vio <(sed -e "s#/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw#/mnt/d/02_research/04_cpp_seg_msckf_vio#g" config/kitti_raw_2011_09_26_drive_0117.yaml) --segment-lidar --segment-every 10'
 
 ## Record KITTI LiDAR segmentation to Rerun
 
@@ -99,17 +99,17 @@ wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify/run_vio 
 #   /metrics/lidar_left_wall_points
 #   /metrics/lidar_right_wall_points
 #   /metrics/lidar_front_wall_points
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify_rerun/run_vio config/kitti_raw_2011_09_26_drive_0117.yaml --segment-lidar --segment-every 10 --rerun-save results/kitti_raw_2011_09_26_drive_0117/lidar_segments.rrd --rerun-image-every 10'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_verify_rerun/run_vio config/kitti_raw_2011_09_26_drive_0117.yaml --segment-lidar --segment-every 10 --rerun-save results/kitti_raw_2011_09_26_drive_0117/lidar_segments.rrd --rerun-image-every 10'
 
 # Same command with temporary config path patch:
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && ./build_verify_rerun/run_vio <(sed -e "s#/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw#/mnt/d/02_research/04_cpp_LC-EKF_VIO#g" config/kitti_raw_2011_09_26_drive_0117.yaml) --segment-lidar --segment-every 10 --rerun-save results/kitti_raw_2011_09_26_drive_0117/lidar_segments.rrd --rerun-image-every 10'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_verify_rerun/run_vio <(sed -e "s#/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw#/mnt/d/02_research/04_cpp_seg_msckf_vio#g" config/kitti_raw_2011_09_26_drive_0117.yaml) --segment-lidar --segment-every 10 --rerun-save results/kitti_raw_2011_09_26_drive_0117/lidar_segments.rrd --rerun-image-every 10'
 
 ## Open KITTI LiDAR segmentation Rerun file
 
-rerun D:\02_research\04_cpp_LC-EKF_VIO\results\kitti_raw_2011_09_26_drive_0117\lidar_segments.rrd
+rerun D:\02_research\04_cpp_seg_msckf_vio\results\kitti_raw_2011_09_26_drive_0117\lidar_segments.rrd
 
 # Useful Rerun checks:
-rerun rrd stats D:\02_research\04_cpp_LC-EKF_VIO\results\kitti_raw_2011_09_26_drive_0117\lidar_segments.rrd
+rerun rrd stats D:\02_research\04_cpp_seg_msckf_vio\results\kitti_raw_2011_09_26_drive_0117\lidar_segments.rrd
 
 # KITTI segmentation viewer tips:
 # - Use the "time" timeline.
@@ -144,17 +144,33 @@ rerun rrd stats D:\02_research\04_cpp_LC-EKF_VIO\results\kitti_raw_2011_09_26_dr
 # - For LiDAR-only logs, add a small LiDAR-only executable around LidarSegmenter.
 
 # Copy an existing KITTI config and edit dataset/output/calibration:
-Copy-Item D:\02_research\04_cpp_LC-EKF_VIO\config\kitti_raw_2011_09_26_drive_0117_local_max_frame.yaml D:\02_research\04_cpp_LC-EKF_VIO\config\my_drive.yaml
+Copy-Item D:\02_research\04_cpp_seg_msckf_vio\config\kitti_raw_2011_09_26_drive_0117_local_max_frame.yaml D:\02_research\04_cpp_seg_msckf_vio\config\my_drive.yaml
 
 # Then edit config/my_drive.yaml:
 #   dataset_type: "kitti_raw"
-#   dataset: "/mnt/d/02_research/04_cpp_LC-EKF_VIO/data/my_dataset/my_drive_sync"
-#   output:  "/mnt/d/02_research/04_cpp_LC-EKF_VIO/results/my_drive"
+#   dataset: "/mnt/d/02_research/04_cpp_seg_msckf_vio/data/my_dataset/my_drive_sync"
+#   output:  "/mnt/d/02_research/04_cpp_seg_msckf_vio/results/my_drive"
 #   max_frames: 0
 #   cam0/cam1 intrinsics and T_cam_imu: replace with your calibration
 
 # Run your converted dataset:
-wsl bash -lc 'cd /mnt/d/02_research/04_cpp_LC-EKF_VIO && mkdir -p results/my_drive && ./build_verify_rerun/run_vio config/my_drive.yaml --segment-lidar --segment-every 1 --rerun-save results/my_drive/lidar_segments.rrd --rerun-image-every 10'
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && mkdir -p results/my_drive && ./build_verify_rerun/run_vio config/my_drive.yaml --segment-lidar --segment-every 1 --rerun-save results/my_drive/lidar_segments.rrd --rerun-image-every 10'
 
 # Open your result:
-rerun D:\02_research\04_cpp_LC-EKF_VIO\results\my_drive\lidar_segments.rrd
+rerun D:\02_research\04_cpp_seg_msckf_vio\results\my_drive\lidar_segments.rrd
+
+## KITTI stereo depth floor/wall segmentation (organized results)
+
+# Build with Rerun enabled:
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && cmake -S . -B build_depth_rerun_on -DCMAKE_BUILD_TYPE:STRING=Release -DENABLE_RERUN:BOOL=ON && cmake --build build_depth_rerun_on -j$(nproc)'
+
+# 1-frame sanity check. PLY output goes under:
+#   results/kitti_raw/2011_09_26_drive_0117/sanity_1frame/depth_segments/
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_depth_verify/run_vio config/kitti_raw_2011_09_26_drive_0117_local_1frame.yaml --segment-depth --segment-every 1'
+
+# Full sequence, segment every 5th frame, save Rerun under:
+#   results/kitti_raw/2011_09_26_drive_0117/full_sequence/rerun/
+wsl bash -lc 'cd /mnt/d/02_research/04_cpp_seg_msckf_vio && ./build_depth_rerun_on/run_vio config/kitti_raw_2011_09_26_drive_0117_local_max_frame.yaml --segment-depth --segment-every 5 --rerun-save results/kitti_raw/2011_09_26_drive_0117/full_sequence/rerun/depth_segments_every5.rrd --rerun-image-every 10'
+
+# Open Rerun. Do not add a trailing backslash after .rrd.
+rerun D:\02_research\04_cpp_seg_msckf_vio\results\kitti_raw\2011_09_26_drive_0117\full_sequence\rerun\depth_segments_every5.rrd

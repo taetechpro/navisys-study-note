@@ -1,8 +1,10 @@
-# C++ ROS-free LC-EKF VIO 학습 노트
+# C++ Seg-aided TC MSCKF VIO 연구 노트
 
-> **목표**: ROS 없이 C++로 VIO(Visual-Inertial Odometry)를 Scratch 구현하며  
-> IMU 전파 / Error-state EKF / Stereo VO 를 체화한다.  
-> 최종 목표: LC-EKF → Tight MSCKF (OpenVINS 동일 구조)
+> **연구 주제**: Stereo + IMU gravity 기반 floor/wall segmentation 으로 추출한 plane constraint 를 TC MSCKF 에 통합해 texture-poor / dynamic 환경에서도 drift 를 억제하는 VIO.
+> **Baseline**: 본 프로젝트 안에 LC-EKF VIO (KITTI ATE ~153 cm) 가 비교군으로 보존됨.
+> **Roadmap**: 본 폴더의 `PLAN/README.md` (9주 일자별 로드맵) 참조.
+>
+> **현재 단계 (2026-05-15)**: Phase 1 — LC-EKF VIO + lidar/stereo floor-wall segmentation 작업이 마무리된 시점. Phase 2 (TC MSCKF 전환) 직전. 본 스냅샷은 `taetechpro/LC-VIO_EKF` 에 박제되어 있으며, 이후 작업은 본 main 브랜치 (origin: `taetechpro/scene-aware-vio`) 에서 이어진다.
 
 현재 실행기는 `dataset_type` 설정으로 `EuRoC`와 `KITTI raw`를 모두 지원하며,
 기본 초기화는 `GT 없이 IMU 정지구간` 기반으로 동작한다.
@@ -56,7 +58,7 @@ Tight MSCKF (Tightly-Coupled):
 ## 2. 프로젝트 구조
 
 ```
-06_cpp_LC-EKF_VIO_kitti_raw/
+04_cpp_seg_msckf_vio/
 ├── CMakeLists.txt
 ├── README.md                    ← 이 파일
 ├── config/
@@ -217,7 +219,7 @@ bool LcEkf::update_vo(const Eigen::Vector3d& p) {
 # CMakeLists.txt 핵심 부분 설명
 
 cmake_minimum_required(VERSION 3.16)   # cmake 최소 버전
-project(cpp_lc_vio CXX)               # 프로젝트 이름, C++ 사용
+project(cpp_seg_msckf_vio CXX)        # 프로젝트 이름, C++ 사용
 set(CMAKE_CXX_STANDARD 20)            # C++20 문법 사용
 
 # 외부 라이브러리 찾기 (apt로 설치된 것들)
@@ -495,7 +497,7 @@ wsl
 sudo apt install -y build-essential cmake libeigen3-dev libopencv-dev libyaml-cpp-dev
 
 # 빌드
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j4
@@ -507,7 +509,7 @@ make -j4
 ./run_vio ../config/kitti_raw_2011_09_26_drive_0117.yaml
 
 # Rerun .rrd 저장 (선택 기능)
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 cmake -S . -B build_rerun -DENABLE_RERUN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build_rerun -j4
 ./build_rerun/run_vio \
@@ -516,7 +518,7 @@ cmake --build build_rerun -j4
   --rerun-image-every 10
 
 # Windows Python에 rerun-sdk가 설치되어 있으면
-python -m rerun_cli D:\02_research\06_cpp_LC-EKF_VIO_kitti_raw\results\kitti_raw_2011_09_26_drive_0117\vio_rerun.rrd
+python -m rerun_cli D:\02_research\04_cpp_seg_msckf_vio\results\kitti_raw_2011_09_26_drive_0117\vio_rerun.rrd
 
 # Rerun world/trajectory_est_aligned는 ATE와 같은 Umeyama 정렬을 적용한 궤적
 # raw 좌표는 trajectory_tum.txt, 정렬 좌표는 trajectory_aligned_tum.txt에 저장됨
@@ -530,7 +532,7 @@ python -m rerun_cli D:\02_research\06_cpp_LC-EKF_VIO_kitti_raw\results\kitti_raw
 
 ```bash
 # WSL에서 나가서 Windows Python으로
-cd D:\02_research\06_cpp_LC-EKF_VIO_kitti_raw
+cd D:\02_research\04_cpp_seg_msckf_vio
 python tools/plot_trajectory.py results/v101
 ```
 
@@ -655,14 +657,14 @@ MSCKF:   δx ∈ ℝ^(15+6N)  + N개 camera pose clones
 
 ```bash
 # 빌드 + 실행 + 플롯 한번에
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw && \
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio && \
   mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON > /dev/null && make -j4 && \
   ./run_vio ../config/euroc_v101.yaml
 ```
 
 ```bash
 # 플롯 (Windows Python)
-python D:\02_research\06_cpp_LC-EKF_VIO_kitti_raw\tools\plot_trajectory.py D:\02_research\06_cpp_LC-EKF_VIO_kitti_raw\results\v101
+python D:\02_research\04_cpp_seg_msckf_vio\tools\plot_trajectory.py D:\02_research\04_cpp_seg_msckf_vio\results\v101
 ```
 
 ### 파일별 핵심 함수

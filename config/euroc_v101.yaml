@@ -1,8 +1,9 @@
 # EuRoC V1_01_easy calibration (matches official OpenVINS config)
 
 dataset_type: "euroc"
-dataset: "/mnt/d/05_agent/codex_ver/OpenVINS/experiments/datasets/euroc/V1_01_easy"
-output:  "/mnt/d/02_research/05_cpp_LC-EKF_VIO/results/v101"
+# NOTE: external dataset (outside project). Adjust to your local EuRoC V1_01 path or symlink under data/
+dataset: "data/EuRoC_MAV_Dataset/V1_01_easy"
+output:  "results/euroc_v101"
 max_frames: 0   # 0 = all frames
 
 init:

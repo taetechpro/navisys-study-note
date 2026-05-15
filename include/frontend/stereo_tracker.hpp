@@ -27,6 +27,13 @@ public:
     int tracked_count() const { return static_cast<int>(prev_pts_l_.size()); }
     const std::vector<cv::Point2f>& tracked_points() const { return prev_pts_l_; }
     const cv::Mat& rectified_left_image() const { return prev_img_l_; }
+    const cv::Mat& rectified_right_image() const { return prev_img_r_; }
+    double rectified_fx() const { return fx_rect_; }
+    double rectified_fy() const { return fy_rect_; }
+    double rectified_cx() const { return cx_rect_; }
+    double rectified_cy() const { return cy_rect_; }
+    double rectified_baseline() const { return baseline_rect_; }
+    Eigen::Matrix3d rectified_to_cam0_rotation() const;
 
 private:
     // ---- camera params ----
@@ -43,6 +50,9 @@ private:
     cv::Mat zero_dist_;            // zero distortion (rectified space)
     double baseline_rect_;         // rectified baseline [m]
     double fx_rect_;               // rectified focal length [px]
+    double fy_rect_;               // rectified focal length [px]
+    double cx_rect_;               // rectified principal point [px]
+    double cy_rect_;               // rectified principal point [px]
 
     // ---- ORB descriptor matching (stereo) ----
     cv::Ptr<cv::ORB> orb_;
@@ -50,6 +60,7 @@ private:
 
     // ---- tracker state (always aligned) ----
     cv::Mat prev_img_l_;
+    cv::Mat prev_img_r_;
     std::vector<cv::Point2f> prev_pts_l_;         // [N] left pixel coords
     std::vector<Eigen::Vector3d> map_pts_world_;  // [N] 3D in world frame
 

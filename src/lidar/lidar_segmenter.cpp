@@ -296,6 +296,9 @@ SegmentCounts SegmentedCloud::counts() const {
         case SegmentLabel::Floor:
             ++result.floor;
             break;
+        case SegmentLabel::Wall:
+            ++result.wall;
+            break;
         case SegmentLabel::LeftWall:
             ++result.left_wall;
             break;
@@ -380,6 +383,8 @@ const char* segment_label_name(SegmentLabel label) {
     switch (label) {
     case SegmentLabel::Floor:
         return "floor";
+    case SegmentLabel::Wall:
+        return "wall";
     case SegmentLabel::LeftWall:
         return "left_wall";
     case SegmentLabel::RightWall:
@@ -396,6 +401,8 @@ Eigen::Vector3i segment_color_rgb(SegmentLabel label) {
     switch (label) {
     case SegmentLabel::Floor:
         return Eigen::Vector3i(70, 180, 90);
+    case SegmentLabel::Wall:
+        return Eigen::Vector3i(60, 150, 255);
     case SegmentLabel::LeftWall:
         return Eigen::Vector3i(60, 150, 255);
     case SegmentLabel::RightWall:

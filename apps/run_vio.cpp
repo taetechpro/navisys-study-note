@@ -23,6 +23,7 @@
 #include <rerun.hpp>
 #endif
 
+#include "depth/stereo_depth_segmenter.hpp"
 #include "ekf/imu_propagator.hpp"
 #include "ekf/lc_ekf.hpp"
 #include "frontend/stereo_tracker.hpp"
@@ -52,7 +53,10 @@ struct CliOptions {
     std::string config_path;
     RerunOptions rerun;
     bool segment_lidar = false;
+    bool segment_depth = false;
+    std::string depth_source = "stereo";
     int segment_every = 1;
+    bool segment_every_set = false;
 };
 
 struct InitialState {
@@ -74,6 +78,8 @@ void print_usage(const char* exe) {
         << "  --rerun-connect               Connect to an already running Rerun viewer\n"
         << "  --rerun-image-every <N>       Log rectified camera image every N frames (default: 10, 0=off)\n"
         << "  --segment-lidar               Segment KITTI Velodyne frames into floor/wall classes\n"
+        << "  --segment-depth               Segment stereo depth into floor/wall classes\n"
+        << "  --depth-source <stereo>       Depth source for --segment-depth (default: stereo)\n"
         << "  --segment-every <N>           Segment every Nth frame (default: 1)\n";
 }
 
@@ -128,18 +134,33 @@ CliOptions parse_cli(int argc, char** argv) {
             options.rerun.image_every = parse_nonnegative_int(argv[++i], arg);
         } else if (arg == "--segment-lidar") {
             options.segment_lidar = true;
+        } else if (arg == "--segment-depth") {
+            options.segment_depth = true;
+        } else if (arg == "--depth-source") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--depth-source requires a source name");
+            }
+            options.depth_source = argv[++i];
+            if (options.depth_source != "stereo") {
+                throw std::runtime_error("--depth-source currently supports stereo only");
+            }
+            options.segment_depth = true;
         } else if (arg == "--segment-every") {
             if (i + 1 >= argc) {
                 throw std::runtime_error("--segment-every requires a frame interval");
             }
-            options.segment_lidar = true;
             options.segment_every = parse_positive_int(argv[++i], arg);
+            options.segment_every_set = true;
         } else if (arg == "-h" || arg == "--help") {
             options.config_path.clear();
             return options;
         } else {
             throw std::runtime_error("Unknown option: " + arg);
         }
+    }
+
+    if (options.segment_every_set && !options.segment_lidar && !options.segment_depth) {
+        options.segment_lidar = true;
     }
 
     return options;
@@ -185,6 +206,64 @@ InitParams load_init_params(const YAML::Node& node) {
     params.static_window_sec = node["static_window_sec"].as<double>(params.static_window_sec);
     params.gravity_norm = node["gravity_norm"].as<double>(params.gravity_norm);
     return params;
+}
+
+StereoDepthSegmentationOptions load_depth_segmentation_options(const YAML::Node& node) {
+    StereoDepthSegmentationOptions options;
+    if (!node) return options;
+
+    options.min_depth_m = node["min_depth_m"].as<double>(options.min_depth_m);
+    options.max_depth_m = node["max_depth_m"].as<double>(options.max_depth_m);
+    options.image_stride = node["image_stride"].as<int>(options.image_stride);
+
+    options.min_x = node["min_x"].as<double>(options.min_x);
+    options.max_x = node["max_x"].as<double>(options.max_x);
+    options.min_y = node["min_y"].as<double>(options.min_y);
+    options.max_y = node["max_y"].as<double>(options.max_y);
+    options.min_z = node["min_z"].as<double>(options.min_z);
+    options.max_z = node["max_z"].as<double>(options.max_z);
+
+    options.floor_search_min_z =
+        node["floor_search_min_z"].as<double>(options.floor_search_min_z);
+    options.floor_search_max_z =
+        node["floor_search_max_z"].as<double>(options.floor_search_max_z);
+    options.floor_distance_threshold =
+        node["floor_distance_threshold_m"].as<double>(options.floor_distance_threshold);
+    options.floor_normal_min_abs_dot_gravity =
+        node["floor_normal_min_abs_dot_gravity"].as<double>(
+            options.floor_normal_min_abs_dot_gravity);
+    options.min_floor_inliers =
+        node["min_floor_inliers"].as<std::size_t>(options.min_floor_inliers);
+
+    options.wall_min_z = node["wall_min_z"].as<double>(options.wall_min_z);
+    options.wall_max_z = node["wall_max_z"].as<double>(options.wall_max_z);
+    options.wall_distance_threshold =
+        node["wall_distance_threshold_m"].as<double>(options.wall_distance_threshold);
+    options.wall_normal_max_abs_dot_gravity =
+        node["wall_normal_max_abs_dot_gravity"].as<double>(
+            options.wall_normal_max_abs_dot_gravity);
+    options.min_wall_extent_m =
+        node["min_wall_extent_m"].as<double>(options.min_wall_extent_m);
+    options.min_wall_height_m =
+        node["min_wall_height_m"].as<double>(options.min_wall_height_m);
+    options.min_wall_inliers =
+        node["min_wall_inliers"].as<std::size_t>(options.min_wall_inliers);
+
+    options.ransac_iterations =
+        node["ransac_iterations"].as<int>(options.ransac_iterations);
+    options.sgbm_min_disparity =
+        node["sgbm_min_disparity"].as<int>(options.sgbm_min_disparity);
+    options.sgbm_num_disparities =
+        node["sgbm_num_disparities"].as<int>(options.sgbm_num_disparities);
+    options.sgbm_block_size =
+        node["sgbm_block_size"].as<int>(options.sgbm_block_size);
+    options.sgbm_uniqueness_ratio =
+        node["sgbm_uniqueness_ratio"].as<int>(options.sgbm_uniqueness_ratio);
+    options.sgbm_speckle_window_size =
+        node["sgbm_speckle_window_size"].as<int>(options.sgbm_speckle_window_size);
+    options.sgbm_speckle_range =
+        node["sgbm_speckle_range"].as<int>(options.sgbm_speckle_range);
+    return options;
 }
 
 std::unique_ptr<DatasetReader> create_reader(const std::string& dataset_type,
@@ -343,9 +422,17 @@ std::string frame_id(int frame_idx) {
 void print_segment_counts(int frame_idx, const SegmentCounts& counts) {
     std::cout << "  lidar[" << frame_idx << "]"
               << " floor=" << counts.floor
+              << " wall=" << counts.wall
               << " left=" << counts.left_wall
               << " right=" << counts.right_wall
               << " front=" << counts.front_wall
+              << " other=" << counts.other << "\n";
+}
+
+void print_depth_segment_counts(int frame_idx, const SegmentCounts& counts) {
+    std::cout << "  depth[" << frame_idx << "]"
+              << " floor=" << counts.floor
+              << " wall=" << counts.wall
               << " other=" << counts.other << "\n";
 }
 
@@ -425,6 +512,10 @@ public:
 
         rec_ = std::make_unique<rerun::RecordingStream>("lc_ekf_vio_kitti_raw");
         if (!options_.save_path.empty()) {
+            const fs::path save_path(options_.save_path);
+            if (save_path.has_parent_path()) {
+                fs::create_directories(save_path.parent_path());
+            }
             rec_->save(options_.save_path).exit_on_failure();
             std::cout << "Rerun recording : " << options_.save_path << "\n";
         }
@@ -520,6 +611,29 @@ public:
         (void)frame_idx;
     }
 
+    void log_depth_segments(int frame_idx,
+                            double timestamp,
+                            const SegmentedCloud& cloud) {
+        if (!rec_ || cloud.points.empty()) {
+            return;
+        }
+
+        rec_->set_time_duration_secs("time", relative_time(timestamp));
+        const auto counts = cloud.counts();
+        rec_->log("metrics/depth_floor_points", rerun::Scalars(static_cast<double>(counts.floor)));
+        rec_->log("metrics/depth_wall_points", rerun::Scalars(static_cast<double>(counts.wall)));
+        rec_->log("metrics/depth_other_points", rerun::Scalars(static_cast<double>(counts.other)));
+
+        auto positions = to_rerun_lidar_positions(cloud);
+        auto colors = to_rerun_lidar_colors(cloud);
+        rec_->log("depth/segments",
+                  rerun::Points3D(std::move(positions))
+                      .with_colors(std::move(colors))
+                      .with_radii(0.035f));
+
+        (void)frame_idx;
+    }
+
     void log_aligned_world(const std::vector<double>& timestamps,
                            const std::vector<Eigen::Vector3d>& traj_est_aligned,
                            const std::vector<Eigen::Vector3d>& traj_gt) {
@@ -596,6 +710,10 @@ public:
                    const std::vector<cv::Point2f>&) {}
 
     void log_lidar_segments(int,
+                            double,
+                            const SegmentedCloud&) {}
+
+    void log_depth_segments(int,
                             double,
                             const SegmentedCloud&) {}
 
@@ -682,6 +800,8 @@ int main(int argc, char** argv) {
         const CameraParams cam1 = load_cam(cfg["cam1"]);
         const ImuNoiseParams imu_noise = load_imu_noise(cfg["imu_noise"]);
         const InitParams init_params = load_init_params(cfg["init"]);
+        const StereoDepthSegmentationOptions depth_options =
+            load_depth_segmentation_options(cfg["depth_segmentation"]);
         const double sigma_vo = cfg["ekf"]["sigma_vo"].as<double>(0.5);
 
         const auto& cam_data = data->cam();
@@ -701,12 +821,27 @@ int main(int argc, char** argv) {
             std::cout << "LiDAR segmentation: every " << cli.segment_every
                       << " frame(s), Velodyne frames=" << lidar_data.size() << "\n";
         }
+        if (cli.segment_depth) {
+            if (cli.depth_source != "stereo") {
+                throw std::runtime_error("--segment-depth currently supports --depth-source stereo only");
+            }
+            std::cout << "Stereo depth segmentation: every " << cli.segment_every
+                      << " frame(s), stride=" << depth_options.image_stride
+                      << " depth=[" << depth_options.min_depth_m
+                      << ", " << depth_options.max_depth_m << "] m\n";
+        }
         const bool write_lidar_ply = cli.segment_lidar && !cli.rerun.requested;
         const std::string lidar_output_dir = output_dir + "/lidar_segments";
         if (write_lidar_ply) {
             fs::create_directories(lidar_output_dir);
         }
+        const bool write_depth_ply = cli.segment_depth && !cli.rerun.requested;
+        const std::string depth_output_dir = output_dir + "/depth_segments";
+        if (write_depth_ply) {
+            fs::create_directories(depth_output_dir);
+        }
         LidarSegmenter lidar_segmenter;
+        StereoDepthSegmenter depth_segmenter(depth_options);
 
         const InitialState init = initialize_from_imu(imu_data, t0, init_params);
 
@@ -714,6 +849,14 @@ int main(int argc, char** argv) {
                                imu_noise, init.g_world);
         LcEkf ekf(imu_prop, cam0.T_cam_imu, sigma_vo);
         StereoTracker tracker(cam0, cam1);
+        StereoDepthGeometry depth_geometry;
+        depth_geometry.fx = tracker.rectified_fx();
+        depth_geometry.fy = tracker.rectified_fy();
+        depth_geometry.cx = tracker.rectified_cx();
+        depth_geometry.cy = tracker.rectified_cy();
+        depth_geometry.baseline_m = tracker.rectified_baseline();
+        depth_geometry.R_cam0_rect = tracker.rectified_to_cam0_rotation();
+        depth_geometry.T_cam0_imu = cam0.T_cam_imu;
 
         // VO is local to the first cam0 frame. Anchor that frame to the initialized IMU world.
         const Eigen::Matrix4d T_IC = cam0.T_cam_imu.inverse(); // cam0 -> IMU
@@ -743,6 +886,7 @@ int main(int argc, char** argv) {
         int frame_count = 0;
         int imu_count = 0;
         int lidar_segmented_frames = 0;
+        int depth_segmented_frames = 0;
         const auto wall_start = std::chrono::steady_clock::now();
 
         for (const auto& cam : cam_data) {
@@ -809,6 +953,24 @@ int main(int argc, char** argv) {
                 }
             }
 
+            if (cli.segment_depth && frame_count % cli.segment_every == 0) {
+                const auto segmented = depth_segmenter.process(
+                    tracker.rectified_left_image(),
+                    tracker.rectified_right_image(),
+                    depth_geometry,
+                    ekf.orientation());
+                rerun.log_depth_segments(frame_count, cam.timestamp, segmented);
+                if (write_depth_ply) {
+                    write_segmented_ply(
+                        depth_output_dir + "/" + frame_id(frame_count) + ".ply",
+                        segmented);
+                }
+                ++depth_segmented_frames;
+                if (frame_count == 0 || frame_count % 100 == 0) {
+                    print_depth_segment_counts(frame_count, segmented.counts());
+                }
+            }
+
             ++frame_count;
             if (frame_count % 100 == 0) {
                 const auto now = std::chrono::steady_clock::now();
@@ -841,6 +1003,9 @@ int main(int argc, char** argv) {
         if (cli.segment_lidar) {
             std::cout << "LiDAR segmented  : " << lidar_segmented_frames << "\n";
         }
+        if (cli.segment_depth) {
+            std::cout << "Depth segmented  : " << depth_segmented_frames << "\n";
+        }
         if (ate >= 0.0) {
             std::cout << "ATE RMSE         : " << ate * 100.0 << " cm\n";
         } else {
@@ -854,6 +1019,9 @@ int main(int argc, char** argv) {
         metrics << "frames: " << frame_count << "\n";
         if (cli.segment_lidar) {
             metrics << "lidar_segmented_frames: " << lidar_segmented_frames << "\n";
+        }
+        if (cli.segment_depth) {
+            metrics << "depth_segmented_frames: " << depth_segmented_frames << "\n";
         }
         if (ate >= 0.0) {
             metrics << "ate_rmse_m: " << ate << "\n";

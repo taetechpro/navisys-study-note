@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>KITTI → Segmentation → Rerun 파이프라인 구조</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1218;
+    --panel: #161b24;
+    --panel2: #1c2230;
+    --fg: #e6e8ee;
+    --fg-dim: #b3bac8;
+    --muted: #8892a5;
+    --accent: #6cb6ff;
+    --accent-2: #f0d878;
+    --border: #2a3242;
+    --code-bg: #0b0e14;
+    --data:   #7fd07f;   /* 데이터 (입력/중간/출력) */
+    --func:   #6cb6ff;   /* 함수/클래스 */
+    --output: #ffb060;   /* 외부 출력 (Rerun, PLY) */
+    --note:   #a78bfa;   /* 코드 위치 */
+  }
+  html[data-theme="light"] {
+    --bg: #f5f7fb; --panel: #ffffff; --panel2: #f0f3f8;
+    --fg: #1a2233; --fg-dim: #3a4356; --muted: #6a7388;
+    --accent: #2563eb; --accent-2: #b07b00;
+    --border: #d3d9e3; --code-bg: #f4f6fa;
+    --data: #2e9a55; --func: #2563eb; --output: #c2570a; --note: #7c3aed;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+    line-height: 1.65; font-size: 14.5px;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 32px 28px 80px; }
+  header.top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 24px;
+  }
+  header.top h1 { margin: 0; font-size: 24px; color: var(--fg); }
+  header.top .sub { color: var(--muted); font-size: 13px; }
+  .theme-toggle {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--fg-dim);
+    padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 14px;
+  }
+  h2 {
+    color: var(--accent); margin: 36px 0 10px; font-size: 20px;
+    border-bottom: 1px solid var(--border); padding-bottom: 6px;
+  }
+  h3 { color: #cfd6e4; margin: 20px 0 8px; font-size: 16px; }
+  html[data-theme="light"] h3 { color: #2a3142; }
+
+  p { margin: 8px 0; }
+  ul { padding-left: 22px; margin: 6px 0; }
+  li { margin: 3px 0; }
+  code {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    background: var(--panel2); color: var(--accent-2);
+    padding: 1px 6px; border-radius: 4px; font-size: 12.5px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 14px; overflow-x: auto;
+    font-size: 12.5px; line-height: 1.55;
+  }
+  pre code { background: transparent; padding: 0; color: var(--fg-dim); }
+
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+    border: 1px solid; margin-right: 4px;
+  }
+  .b-data   { color: var(--data);   border-color: var(--data);   background: color-mix(in srgb, var(--data) 12%, transparent); }
+  .b-func   { color: var(--func);   border-color: var(--func);   background: color-mix(in srgb, var(--func) 12%, transparent); }
+  .b-output { color: var(--output); border-color: var(--output); background: color-mix(in srgb, var(--output) 12%, transparent); }
+  .b-note   { color: var(--note);   border-color: var(--note);   background: color-mix(in srgb, var(--note) 12%, transparent); }
+
+  .ref {
+    color: var(--note); font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 12px; background: var(--panel2);
+    padding: 1px 6px; border-radius: 4px;
+  }
+
+  .stage {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 8px;
+    padding: 14px 18px; margin: 12px 0;
+  }
+  .stage h3 { margin-top: 0; }
+  .stage-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  .stage-grid > div {
+    background: var(--panel2); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 10px 14px;
+  }
+  .stage-grid h4 {
+    margin: 0 0 6px; font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+
+  .mermaid-wrap {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px; margin: 16px 0;
+    overflow-x: auto;
+  }
+  .mermaid { text-align: center; }
+
+  table {
+    width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px;
+  }
+  th, td { border: 1px solid var(--border); padding: 7px 12px; text-align: left; }
+  th { background: var(--panel2); color: var(--accent); font-weight: 600; }
+
+  .legend {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 16px; margin: 12px 0;
+    font-size: 13px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot {
+    width: 14px; height: 14px; border-radius: 3px;
+    border: 1px solid;
+  }
+  .ld-data   { background: var(--data);   border-color: var(--data); }
+  .ld-func   { background: var(--func);   border-color: var(--func); }
+  .ld-output { background: var(--output); border-color: var(--output); }
+  .ld-note   { background: var(--note);   border-color: var(--note); }
+
+  .toc {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 22px; margin-bottom: 24px;
+  }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header class="top">
+  <div>
+    <h1>KITTI → LiDAR Segmentation → Rerun 파이프라인</h1>
+    <div class="sub"><b style="color:var(--data)">LiDAR-only 경로</b> · 카메라/IMU 는 메인 루프에서 병렬로 돌지만 segmentation 입력에 일절 안 들어감</div>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" title="테마 전환">🌙</button>
+</header>
+
+<div style="background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--data); border-radius:8px; padding:14px 18px; margin-bottom:20px;">
+  <b>📌 이 문서의 범위</b><br>
+  <code>LidarSegmenter::process</code> 의 입력은 <code>std::vector&lt;LidarPoint&gt;</code> 하나뿐이다 — 카메라 이미지, EKF 자세, IMU 모두 받지 않는다.
+  즉 segmentation 은 <b>순수 기하 기반 LiDAR-only</b> 처리이며, 본 문서는 그 경로(.bin → RANSAC → Rerun)만 다룬다.
+  카메라+IMU 트랙(StereoTracker, LcEkf)은 동일 메인 루프에서 <b>병렬·독립</b>으로 돌아 같은 Rerun timeline 에 합쳐질 뿐이다.
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot ld-data"></div>데이터 (입력·중간·출력)</div>
+  <div class="legend-item"><div class="legend-dot ld-func"></div>함수 / 클래스</div>
+  <div class="legend-item"><div class="legend-dot ld-output"></div>외부 sink (Rerun · PLY)</div>
+  <div class="legend-item"><div class="legend-dot ld-note"></div>코드 위치</div>
+</div>
+
+<div class="toc">
+  <b>목차</b>
+  <ul>
+    <li><a href="#overview">1. 한 눈에 보는 전체 흐름</a></li>
+    <li><a href="#stage1">2. Stage 1 — 데이터셋 디스크 구조</a></li>
+    <li><a href="#stage2">3. Stage 2 — KittiRawReader · path/timestamp 로딩</a></li>
+    <li><a href="#stage3">4. Stage 3 — 메인 루프 (run_vio.cpp)</a></li>
+    <li><a href="#stage4">5. Stage 4 — Velodyne .bin 로드</a></li>
+    <li><a href="#stage5">6. Stage 5 — LidarSegmenter::process</a></li>
+    <li><a href="#stage6">7. Stage 6 — Rerun 시각화</a></li>
+    <li><a href="#tree">8. Rerun entity tree</a></li>
+    <li><a href="#refs">9. 코드 위치 인덱스</a></li>
+  </ul>
+</div>
+
+<!-- ====================================================== -->
+<h2 id="overview">1. 한 눈에 보는 전체 흐름</h2>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart TB
+  subgraph DISK["📂 KITTI raw sync 디렉토리"]
+    D3["velodyne_points/data/<br/>0000000000.bin · · ·<br/>float[4] × N (x,y,z,intensity)"]
+    D4["velodyne_points/timestamps.txt"]
+  end
+
+  DISK --> READER
+
+  subgraph READER["KittiRawReader · load_velodyne()"]
+    R1["LiDAR 파일 경로 + timestamp<br/>리스트화 (lazy)"]
+  end
+
+  READER --> LOOP
+
+  subgraph LOOP["main loop · run_vio.cpp"]
+    L1["for frame_count = 0 .. N-1"]
+    L1 --> L4{"--segment-lidar &amp;&amp;<br/>frame % every == 0?"}
+  end
+
+  L4 -- "yes" --> LIDAR
+
+  subgraph LIDAR["LiDAR pipeline (카메라/EKF 의존성 0)"]
+    P1["load_kitti_velodyne_bin(.bin)<br/>→ vector&lt;LidarPoint&gt;"]
+    P1 --> P2["LidarSegmenter::process()<br/>4× RANSAC (Floor, L/R/F Wall)"]
+    P2 --> P3["SegmentedCloud<br/>{points, labels}"]
+  end
+
+  LIDAR --> SINK
+
+  subgraph SINK["출력 sink"]
+    S1["rerun.log_lidar_segments()<br/>📡 /lidar/segments + /metrics/lidar_*"]
+    S2["write_segmented_ply()<br/>📄 .ply 파일"]
+  end
+
+  classDef data fill:#7fd07f22,stroke:#7fd07f,color:#7fd07f
+  classDef func fill:#6cb6ff22,stroke:#6cb6ff,color:#6cb6ff
+  classDef sink fill:#ffb06022,stroke:#ffb060,color:#ffb060
+  class D3,D4,P1,P3 data
+  class R1,L1,P2 func
+  class S1,S2 sink
+</div>
+</div>
+
+<p style="color:var(--muted); font-size:13px;">
+  ※ <code>StereoTracker</code>, <code>ImuPropagator</code>, <code>LcEkf</code> 는 같은 메인 루프 안에서 매 frame 돌지만, 그 결과는 <b>위 LiDAR 흐름의 어느 박스에도 입력으로 들어가지 않는다</b>. 따라서 본 다이어그램에서는 생략.
+</p>
+
+<!-- ====================================================== -->
+<h2 id="stage1">2. Stage 1 — 데이터셋 디스크 구조</h2>
+
+<div class="stage">
+<h3><span class="badge b-data">DATA</span> KITTI raw sync — LiDAR 부분만</h3>
+
+<pre><code>&lt;root&gt;/
+└─ velodyne_points/                  <span style="color:#7fd07f">← 본 문서에서 다룰 유일한 디렉토리</span>
+    ├─ data/
+    │   ├─ 0000000000.bin            <span style="color:#5c6370">// float[4] × N (x, y, z, intensity)</span>
+    │   ├─ 0000000001.bin
+    │   └─ ...
+    └─ timestamps.txt                <span style="color:#5c6370">// frame 별 시각 (ns)</span>
+</code></pre>
+
+<p>한 <code>.bin</code> 파일 = 한 프레임의 전체 점군 (~120k 점, ~2 MB). frame index 는 카메라/oxts 와 동기화되어 있지만, segmentation 단계에선 사용하지 않는다.</p>
+<div><span class="ref">include/io/kitti_raw_reader.hpp:8-13</span></div>
+</div>
+
+<!-- ====================================================== -->
+<h2 id="stage2">3. Stage 2 — KittiRawReader · path/timestamp 로딩</h2>
+
+<div class="stage">
+<h3><span class="badge b-func">CLASS</span> KittiRawReader::load_velodyne()</h3>
+
+<p>KittiRawReader 는 카메라·IMU·LiDAR 모두 로드하지만, 본 문서에서는 <b>LiDAR 부분만</b> 관심.</p>
+
+<div class="stage-grid">
+  <div>
+    <h4>입력</h4>
+    <ul>
+      <li><code>dataset_root</code> (string)</li>
+    </ul>
+  </div>
+  <div>
+    <h4>관심 출력</h4>
+    <ul>
+      <li><code>lidar_data()</code> → <code>std::vector&lt;std::string&gt;</code> (.bin 파일 경로 list)</li>
+    </ul>
+  </div>
+</div>
+
+<p style="margin-top:10px;">실제 점군은 <b>이 시점엔 안 읽음</b> (lazy). 메인 루프에서 frame 마다 <code>lidar_data[frame_count]</code> 로 경로만 꺼낸 뒤 <code>load_kitti_velodyne_bin</code> 으로 그때그때 읽는다.</p>
+<div><span class="ref">apps/run_vio.cpp:275</span> · <span class="ref">include/io/kitti_raw_reader.hpp:13-21</span></div>
+</div>
+
+<!-- ====================================================== -->
+<h2 id="stage3">4. Stage 3 — 메인 루프 (run_vio.cpp)</h2>
+
+<div class="stage">
+<h3><span class="badge b-func">FUNC</span> 메인 루프 — LiDAR 분기만 발췌</h3>
+
+<pre><code><span style="color:#5c6370">// run_vio.cpp:912-954  ── LiDAR 관련 부분만 추출</span>
+<span style="color:#c792ea">for</span> (<span style="color:#82aaff">int</span> frame_count = <span style="color:#f78c6c">0</span>; frame_count &lt; camera_data.size(); ++frame_count) {
+
+    <span style="color:#5c6370">// ┌── 카메라/EKF 트랙 (생략) — 본 흐름의 입력이 아님 ─┐</span>
+    <span style="color:#5c6370">// │  tracker.process(img_l, img_r);                  │</span>
+    <span style="color:#5c6370">// │  ekf.update(pose);                               │</span>
+    <span style="color:#5c6370">// │  rerun.log_frame(...);                           │</span>
+    <span style="color:#5c6370">// └──────────────────────────────────────────────────┘</span>
+
+    <span style="color:#5c6370">// ── LiDAR 트랙 (관심 대상) ─────────────────────────</span>
+    <span style="color:#c792ea">if</span> (cli.segment_lidar &amp;&amp; frame_count % cli.segment_every == <span style="color:#f78c6c">0</span>) {
+        <span style="color:#c792ea">const auto</span> lidar_points = load_kitti_velodyne_bin(lidar_data[frame_count]);
+        <span style="color:#c792ea">const auto</span> segmented    = lidar_segmenter.process(lidar_points);
+        rerun.log_lidar_segments(frame_count, cam.timestamp, segmented);
+        <span style="color:#c792ea">if</span> (write_lidar_ply) write_segmented_ply(...);
+    }
+}</code></pre>
+
+<p><b>핵심:</b></p>
+<ul>
+  <li>frame index 만 카메라와 공유 — <code>lidar_data[frame_count]</code> 로 같은 시각의 .bin 선택.</li>
+  <li>그 외 카메라/EKF 의 어떤 결과도 <code>lidar_segmenter.process()</code> 에 안 들어감.</li>
+  <li>Rerun timestamp 는 <code>cam.timestamp</code> 사용 — 시각 축 통일을 위함이지 데이터 융합이 아님.</li>
+</ul>
+<div><span class="ref">apps/run_vio.cpp:937-954</span></div>
+</div>
+
+<!-- ====================================================== -->
+<h2 id="stage4">5. Stage 4 — Velodyne .bin 로드</h2>
+
+<div class="stage">
+<h3><span class="badge b-func">FUNC</span> load_kitti_velodyne_bin(path) → vector&lt;LidarPoint&gt;</h3>
+
+<table>
+<tr><th>파일 포맷</th><th>처리</th></tr>
+<tr><td>binary, <code>float[4]</code> × N (x, y, z, intensity)</td><td>한 점 = 16 byte</td></tr>
+<tr><td>파일 크기 % 16 ≠ 0</td><td>잘림 → 예외</td></tr>
+<tr><td>좌표계</td><td>+x 전방, +y 좌측, +z 상방</td></tr>
+</table>
+
+<p><b>속도:</b> 한 프레임 ~120,000 점 → 약 2 MB → SSD 에서 1ms 이하.</p>
+<div><span class="ref">src/lidar/lidar_segmenter.cpp:320-348</span></div>
+</div>
+
+<!-- ====================================================== -->
+<h2 id="stage5">6. Stage 5 — LidarSegmenter::process</h2>
+
+<div class="stage">
+<h3><span class="badge b-func">FUNC</span> 4단계 RANSAC (Greedy Peeling)</h3>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+  IN["vector&lt;LidarPoint&gt;<br/>~120k pts"]
+  IN --> ROI["1. ROI + finite 필터<br/>x∈[-5,50], y∈[-25,25], z∈[-3,3]"]
+  ROI --> CLOUD["SegmentedCloud<br/>labels = Other 초기화"]
+  CLOUD --> FLOOR["2. Floor RANSAC<br/>|n_z|≥0.85<br/>z₀=-d/n_z ∈ [-2.6,-0.4]"]
+  FLOOR --> LWALL["3. Left wall<br/>y≥+2.0<br/>|n_y|≥0.70"]
+  LWALL --> RWALL["4. Right wall<br/>y≤-2.0<br/>|n_y|≥0.70"]
+  RWALL --> FWALL["5. Front wall<br/>x≥5.0<br/>|n_x|≥0.70"]
+  FWALL --> OUT["SegmentedCloud<br/>{points, labels}"]
+
+  classDef func fill:#6cb6ff22,stroke:#6cb6ff,color:#6cb6ff
+  classDef data fill:#7fd07f22,stroke:#7fd07f,color:#7fd07f
+  class ROI,FLOOR,LWALL,RWALL,FWALL func
+  class IN,CLOUD,OUT data
+</div>
+</div>
+
+<p><b>출력 라벨</b> 5 종:</p>
+<table>
+<tr><th>라벨</th><th>의미</th><th>색상</th></tr>
+<tr><td><code>Floor</code></td><td>수평 plane inlier</td><td style="color:#7fd07f">■ 70, 180, 90</td></tr>
+<tr><td><code>LeftWall</code></td><td>좌측 수직 plane</td><td style="color:#6cb6ff">■ 60, 150, 255</td></tr>
+<tr><td><code>RightWall</code></td><td>우측 수직 plane</td><td style="color:#ffb060">■ 255, 160, 60</td></tr>
+<tr><td><code>FrontWall</code></td><td>전방 수직 plane</td><td style="color:#f08abf">■ 230, 80, 160</td></tr>
+<tr><td><code>Other</code></td><td>그 외 모든 점</td><td style="color:#9aa3b2">■ 150, 150, 150</td></tr>
+</table>
+
+<div><span class="ref">src/lidar/lidar_segmenter.cpp:195-290</span></div>
+</div>
+
+<!-- ====================================================== -->
+<h2 id="stage6">7. Stage 6 — Rerun 시각화</h2>
+
+<div class="stage">
+<h3><span class="badge b-output">SINK</span> rerun::log_lidar_segments(frame_idx, timestamp, cloud)</h3>
+
+<p>SegmentedCloud 를 받아 Rerun 에 <b>세 종류 로그</b>를 동시에 기록:</p>
+
+<table>
+<tr><th>Rerun entity</th><th>타입</th><th>내용</th></tr>
+<tr><td><code>/lidar/segments</code></td><td><code>Points3D</code></td><td>색상 입힌 3D 점군 (반지름 0.035 m)</td></tr>
+<tr><td><code>/metrics/lidar_floor_points</code></td><td><code>Scalars</code></td><td>floor 라벨 점 개수 (timeline)</td></tr>
+<tr><td><code>/metrics/lidar_left_wall_points</code></td><td><code>Scalars</code></td><td>좌측 벽 점 개수</td></tr>
+<tr><td><code>/metrics/lidar_right_wall_points</code></td><td><code>Scalars</code></td><td>우측 벽 점 개수</td></tr>
+<tr><td><code>/metrics/lidar_front_wall_points</code></td><td><code>Scalars</code></td><td>전방 벽 점 개수</td></tr>
+</table>
+
+<p>Rerun 의 timeline 은 <code>set_time_duration_secs("time", relative_time(timestamp))</code> 로 카메라·EKF 로그와 동일 시각축. 즉 한 시점을 클릭하면 카메라 이미지·feature·plane segmentation·메트릭이 동시에 보임.</p>
+
+<p><b>Rerun 미사용 시:</b> <code>write_segmented_ply()</code> 가 <code>output/lidar_segments/&lt;frame_id&gt;.ply</code> 로 저장 → CloudCompare / MeshLab 에서 라벨별 색상 그대로 확인.</p>
+
+<div><span class="ref">apps/run_vio.cpp:590-612 (log_lidar_segments)</span> · <span class="ref">src/lidar/lidar_segmenter.cpp:350-380 (write_segmented_ply)</span></div>
+</div>
+
+<!-- ====================================================== -->
+<h2 id="tree">8. Rerun entity tree</h2>
+
+<pre><code>📡 Recording (LiDAR 관련 entity 만)
+├─ lidar/
+│   └─ segments                  <span style="color:#5c6370">// Points3D, 라벨별 색상</span>
+├─ metrics/
+│   ├─ lidar_floor_points        <span style="color:#5c6370">// Scalars</span>
+│   ├─ lidar_left_wall_points
+│   ├─ lidar_right_wall_points
+│   └─ lidar_front_wall_points
+└─ (timeline)
+    └─ time (seconds)            <span style="color:#5c6370">// cam.timestamp 사용 — 시각 축 통일용</span>
+
+<span style="color:#5c6370">// 카메라/EKF 가 추가하는 entity (camera/*, metrics/tracked_features, metrics/speed_mps 등)
+// 는 본 문서 범위 밖. 같은 Recording 안에 공존하나 LiDAR 흐름과 데이터 의존성 X.</span></code></pre>
+
+<p>Rerun viewer 에서 좌측 entity tree 를 열면 위 구조가 보인다. <code>/lidar/segments</code> 의 timeline 슬라이더로 frame 별 segmentation 결과를 스크럽 가능.</p>
+
+<!-- ====================================================== -->
+<h2 id="refs">9. 코드 위치 인덱스</h2>
+
+<table>
+<tr><th>역할</th><th>파일</th><th>라인</th></tr>
+<tr><td>KittiRawReader 선언</td><td><code>include/io/kitti_raw_reader.hpp</code></td><td>13-21</td></tr>
+<tr><td>KittiRawReader 인스턴스화</td><td><code>apps/run_vio.cpp</code></td><td>275</td></tr>
+<tr><td>LidarSegmenter 생성</td><td><code>apps/run_vio.cpp</code></td><td>843</td></tr>
+<tr><td>메인 루프 LiDAR 분기</td><td><code>apps/run_vio.cpp</code></td><td>937-954</td></tr>
+<tr><td>load_kitti_velodyne_bin</td><td><code>src/lidar/lidar_segmenter.cpp</code></td><td>320-348</td></tr>
+<tr><td>LidarSegmenter::process</td><td><code>src/lidar/lidar_segmenter.cpp</code></td><td>195-290</td></tr>
+<tr><td>fit_plane_ransac (RANSAC 코어)</td><td><code>src/lidar/lidar_segmenter.cpp</code></td><td>72-125</td></tr>
+<tr><td>RerunLogger::log_lidar_segments</td><td><code>apps/run_vio.cpp</code></td><td>590-612</td></tr>
+<tr><td>write_segmented_ply</td><td><code>src/lidar/lidar_segmenter.cpp</code></td><td>350-380</td></tr>
+</table>
+
+<p style="color:var(--muted); font-size:12.5px; margin-top:10px;">
+  ※ <code>StereoTracker</code>, <code>LcEkf</code>, <code>ImuPropagator</code>, <code>RerunLogger::log_frame</code> 등 카메라/EKF 관련 위치는 본 문서 범위 밖이라 생략. 필요 시 별도 문서로 분리.
+</p>
+
+</div>
+
+<script>
+  // ── theme ──
+  (function () {
+    const KEY = 'practice-theme';
+    const root = document.documentElement;
+    const stored = localStorage.getItem(KEY);
+    const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    const initial = stored || (prefersLight ? 'light' : 'dark');
+    root.setAttribute('data-theme', initial);
+
+    function applyMermaid(theme) {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: theme === 'light' ? 'default' : 'dark',
+        flowchart: { curve: 'basis', padding: 12 }
+      });
+      // re-render
+      document.querySelectorAll('.mermaid').forEach((el, i) => {
+        const code = el.dataset.original || el.textContent;
+        el.dataset.original = code;
+        el.removeAttribute('data-processed');
+        el.innerHTML = code;
+      });
+      mermaid.run();
+    }
+
+    function setIcon(theme) {
+      const btn = document.getElementById('theme-toggle');
+      if (btn) btn.textContent = theme === 'light' ? '☀️' : '🌙';
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // store originals first
+      document.querySelectorAll('.mermaid').forEach(el => {
+        el.dataset.original = el.textContent;
+      });
+      applyMermaid(initial);
+      setIcon(initial);
+
+      const btn = document.getElementById('theme-toggle');
+      btn && btn.addEventListener('click', () => {
+        const cur = root.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+        const next = cur === 'light' ? 'dark' : 'light';
+        root.setAttribute('data-theme', next);
+        localStorage.setItem(KEY, next);
+        setIcon(next);
+        applyMermaid(next);
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>

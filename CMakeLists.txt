@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
-project(cpp_lc_vio CXX)
+project(cpp_seg_msckf_vio CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ENABLE_RERUN "Enable optional Rerun logging support" OFF)
 set(RERUN_SDK_URL
@@ -25,16 +26,17 @@ endif()
 # ---- include dirs ----
 include_directories(include)
 
-# ---- library: lc_vio_core ----
-add_library(lc_vio_core
+# ---- library: vio_core ----
+add_library(vio_core
     src/io/euroc_reader.cpp
     src/io/kitti_raw_reader.cpp
     src/lidar/lidar_segmenter.cpp
+    src/depth/stereo_depth_segmenter.cpp
     src/frontend/stereo_tracker.cpp
     src/ekf/imu_propagator.cpp
     src/ekf/lc_ekf.cpp
 )
-target_link_libraries(lc_vio_core
+target_link_libraries(vio_core
     PUBLIC
         Eigen3::Eigen
         ${OpenCV_LIBS}
@@ -43,7 +45,7 @@ target_link_libraries(lc_vio_core
 
 # ---- executables ----
 add_executable(run_vio apps/run_vio.cpp)
-target_link_libraries(run_vio PRIVATE lc_vio_core)
+target_link_libraries(run_vio PRIVATE vio_core)
 if(ENABLE_RERUN)
     target_link_libraries(run_vio PRIVATE rerun_sdk)
     target_compile_definitions(run_vio PRIVATE LC_VIO_WITH_RERUN=1)
@@ -51,7 +53,7 @@ endif()
 
 # Backward-compatible executable name; both dataset types are handled by run_vio.cpp.
 add_executable(run_euroc apps/run_vio.cpp)
-target_link_libraries(run_euroc PRIVATE lc_vio_core)
+target_link_libraries(run_euroc PRIVATE vio_core)
 if(ENABLE_RERUN)
     target_link_libraries(run_euroc PRIVATE rerun_sdk)
     target_compile_definitions(run_euroc PRIVATE LC_VIO_WITH_RERUN=1)

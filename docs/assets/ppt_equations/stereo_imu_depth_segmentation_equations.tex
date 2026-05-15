@@ -1,0 +1,171 @@
+\documentclass[10pt]{article}
+
+\usepackage[
+  paperwidth=13.333in,
+  paperheight=7.5in,
+  margin=0.42in
+]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{xcolor}
+\usepackage{array}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\renewcommand{\familydefault}{\sfdefault}
+
+\definecolor{ink}{HTML}{182230}
+\definecolor{muted}{HTML}{5F6B7A}
+\definecolor{rule}{HTML}{D8DEE8}
+\definecolor{panel}{HTML}{F7F9FC}
+\definecolor{blue}{HTML}{1D5FD1}
+\definecolor{green}{HTML}{188038}
+\definecolor{orange}{HTML}{B45F06}
+
+\newcommand{\panelbox}[2]{%
+  \fcolorbox{rule}{panel}{%
+    \begin{minipage}[t]{\dimexpr#1-2\fboxsep-2\fboxrule\relax}
+      #2
+    \end{minipage}%
+  }%
+}
+
+\newcommand{\smalllabel}[1]{%
+  {\color{muted}\footnotesize\textbf{#1}}\vspace{0.08in}
+}
+
+\begin{document}
+\color{ink}
+
+{\Large\bfseries Stereo-IMU Geometry-Based Floor/Wall Segmentation}\hfill
+{\small\color{muted} KITTI \texttt{/depth/segments}, every 5 frames}
+
+\vspace{0.06in}
+{\color{rule}\hrule height 0.8pt}
+\vspace{0.18in}
+
+\begin{minipage}[t]{0.485\linewidth}
+\panelbox{\linewidth}{
+  \smalllabel{1. Stereo disparity to 3D point}
+  \[
+    d(u,v) = u_L - u_R,
+    \qquad
+    Z = \frac{f_x B}{d}
+  \]
+  \[
+    X = \frac{(u-c_x)Z}{f_x},
+    \qquad
+    Y = \frac{(v-c_y)Z}{f_y},
+    \qquad
+    \bm p_{\mathrm{rect}} =
+    \begin{bmatrix}X\\Y\\Z\end{bmatrix}
+  \]
+  \vspace{0.02in}
+  {\color{muted}\footnotesize
+  Rectified stereo converts image pixels into a semi-dense depth cloud.}
+}
+
+\vspace{0.18in}
+
+\panelbox{\linewidth}{
+  \smalllabel{2. Gravity-aligned frame}
+  \[
+    \bm p_g =
+    R_{GI}\,R_{IC}\,R_{CR}\,\bm p_{\mathrm{rect}},
+    \qquad
+    \bm g =
+    \begin{bmatrix}0\\0\\1\end{bmatrix}
+  \]
+  \[
+    \text{rectified camera}
+    \rightarrow
+    \text{cam0}
+    \rightarrow
+    \text{IMU}
+    \rightarrow
+    \text{gravity-aligned frame}
+  \]
+  \vspace{0.02in}
+  {\color{muted}\footnotesize
+  IMU/EKF orientation supplies the vertical reference for plane classification.}
+}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.485\linewidth}
+\panelbox{\linewidth}{
+  \smalllabel{3. RANSAC plane fitting}
+  \[
+    \pi:\ \bm n^\top \bm p_g + b = 0,
+    \qquad
+    \|\bm n\|=1
+  \]
+  \[
+    (\bm n^*, b^*) =
+    \arg\max_{\bm n,b}
+    \sum_i
+    \mathbf{1}\!\left(
+      \left|\bm n^\top \bm p_i + b\right| < \tau
+    \right)
+  \]
+  \vspace{0.02in}
+  {\color{muted}\footnotesize
+  The best plane is the one with the largest inlier support.}
+}
+
+\vspace{0.18in}
+
+\panelbox{\linewidth}{
+  \smalllabel{4. Floor / wall decision}
+  \[
+    \textcolor{green}{\mathrm{floor}}:
+    \quad
+    \left|\bm n_f^\top \bm g\right| > \cos\theta_f,
+    \qquad
+    \left|\bm n_f^\top \bm p_i + b_f\right| < \tau_f
+  \]
+  \[
+    \textcolor{blue}{\mathrm{wall}}:
+    \quad
+    \left|\bm n_w^\top \bm g\right| < \sin\theta_w,
+    \qquad
+    \left|\bm n_w^\top \bm p_i + b_w\right| < \tau_w
+  \]
+  \[
+    \operatorname{label}(\bm p_i)=
+    \begin{cases}
+      \textcolor{green}{\mathrm{floor}}, & \bm p_i \in I_f\\
+      \textcolor{blue}{\mathrm{wall}},  & \bm p_i \in I_w\\
+      \textcolor{orange}{\mathrm{other}}, & \text{otherwise}
+    \end{cases}
+  \]
+}
+\end{minipage}
+
+\vspace{0.24in}
+
+\panelbox{\linewidth}{
+  \smalllabel{Pipeline summary}
+  \[
+    \text{rectified stereo pair}
+    \xrightarrow{\ \mathrm{SGBM}\ }
+    d(u,v)
+    \xrightarrow{\ Z=f_xB/d\ }
+    \bm p_{\mathrm{rect}}
+    \xrightarrow{\ R_{GI}R_{IC}R_{CR}\ }
+    \bm p_g
+    \xrightarrow{\ \mathrm{RANSAC}\ }
+    \{\textcolor{green}{\mathrm{floor}},\,
+      \textcolor{blue}{\mathrm{wall}},\,
+      \textcolor{orange}{\mathrm{other}}\}
+  \]
+  \vspace{0.01in}
+  {\color{muted}\small
+  Key idea:
+  \(\text{floor normal} \parallel \bm g\), while
+  \(\text{wall normal} \perp \bm g\).
+  Stereo provides depth; IMU provides the gravity axis.}
+  \vspace{0.04in}
+}
+
+\end{document}

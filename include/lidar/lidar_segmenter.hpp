@@ -1,34 +1,12 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
 
 #include <Eigen/Core>
 
-struct LidarPoint {
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-    float intensity = 0.0f;
-};
-
-enum class SegmentLabel : std::uint8_t {
-    Other = 0,
-    Floor = 1,
-    LeftWall = 2,
-    RightWall = 3,
-    FrontWall = 4,
-};
-
-struct SegmentCounts {
-    std::size_t other = 0;
-    std::size_t floor = 0;
-    std::size_t left_wall = 0;
-    std::size_t right_wall = 0;
-    std::size_t front_wall = 0;
-};
+#include "semantic/segment_types.hpp"
 
 struct LidarSegmentationOptions {
     double min_x = -5.0;
@@ -57,13 +35,6 @@ struct LidarSegmentationOptions {
     std::size_t min_wall_inliers = 150;
 
     int ransac_iterations = 180;
-};
-
-struct SegmentedCloud {
-    std::vector<LidarPoint> points;
-    std::vector<SegmentLabel> labels;
-
-    SegmentCounts counts() const;
 };
 
 class LidarSegmenter {

@@ -1,6 +1,6 @@
 dataset_type: "kitti_raw"
-dataset: "/mnt/d/02_research/04_cpp_LC-EKF_VIO/data/kitti_raw/2011_09_26/2011_09_26_drive_0117_sync"
-output:  "/mnt/d/02_research/04_cpp_LC-EKF_VIO/results/kitti_raw_2011_09_26_drive_0117"
+dataset: "data/kitti_raw/2011_09_26/2011_09_26_drive_0117_sync"
+output:  "results/kitti_raw/2011_09_26_drive_0117/sanity_1frame"
 max_frames: 1
 
 init:

@@ -1,6 +1,6 @@
 # KITTI raw 풀 파이프라인 운용 가이드
 
-> **목적**: 본 문서는 `06_cpp_LC-EKF_VIO_kitti_raw` 프로젝트를 **외부 도움 없이**
+> **목적**: 본 문서는 `04_cpp_seg_msckf_vio` 프로젝트를 **외부 도움 없이**
 > 처음부터 끝까지(데이터 다운로드 → 캘리브레이션 추출 → config 작성 → 빌드 →
 > 단일 시퀀스 실행 → 다중 시퀀스 일괄 테스트 → 결과 검증) 굴려보고 싶은 사용자를
 > 위한 **운용 매뉴얼 + 코드 내부 워크스루**다.
@@ -360,7 +360,7 @@ data/kitti_raw/
 검증 한 줄:
 
 ```bash
-tree -L 4 /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw/data/kitti_raw/2011_09_26/2011_09_26_drive_0001_sync
+tree -L 4 /mnt/d/02_research/04_cpp_seg_msckf_vio/data/kitti_raw/2011_09_26/2011_09_26_drive_0001_sync
 ```
 
 본 프로젝트의 KITTI 리더(`src/io/kitti_raw_reader.cpp`)는 **`image_00`/`image_01`
@@ -470,7 +470,7 @@ T_cam1_cam0 = [ I  | (-baseline_x, 0, 0) ; 0 0 0 1 ]
 from pathlib import Path
 import numpy as np
 
-CALIB_DIR = Path("/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw/data/kitti_raw/2011_09_26")
+CALIB_DIR = Path("/mnt/d/02_research/04_cpp_seg_msckf_vio/data/kitti_raw/2011_09_26")
 
 def parse_kv(path):
     out = {}
@@ -544,7 +544,7 @@ yaml_block("cam1", T_cam1_imu)
 ### 4.1 템플릿 복사
 
 ```bash
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 cp config/kitti_raw_template.yaml config/kitti_raw_2011_09_26_drive_0009.yaml
 ```
 
@@ -552,8 +552,8 @@ cp config/kitti_raw_template.yaml config/kitti_raw_2011_09_26_drive_0009.yaml
 
 ```yaml
 dataset_type: "kitti_raw"
-dataset: "/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw/data/kitti_raw/2011_09_26/2011_09_26_drive_0009_sync"
-output:  "/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw/results/kitti_raw_2011_09_26_drive_0009"
+dataset: "/mnt/d/02_research/04_cpp_seg_msckf_vio/data/kitti_raw/2011_09_26/2011_09_26_drive_0009_sync"
+output:  "/mnt/d/02_research/04_cpp_seg_msckf_vio/results/kitti_raw_2011_09_26_drive_0009"
 max_frames: 0           # 0 = 전체. 디버깅 시 50으로 시작 권장.
 
 init:
@@ -1030,7 +1030,7 @@ metrics << "ate_rmse_cm: " << ate * 100.0 << "\n";
 ### 6.1 표준 시퀀스 (Release)
 
 ```bash
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
@@ -1071,7 +1071,7 @@ gdb --args ./run_vio ../config/kitti_raw_2011_09_26_drive_0001.yaml
 ### 7.1 실행
 
 ```bash
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw/build
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio/build
 ./run_vio ../config/kitti_raw_2011_09_26_drive_0001.yaml
 ```
 
@@ -1140,7 +1140,7 @@ YAML의 `max_frames: 50` 으로 두면 50프레임만 돌고 끝난다. config �
 ### 8.1 명령
 
 ```bash
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 python3 tools/plot_trajectory.py results/kitti_raw_2011_09_26_drive_0001/
 ```
 
@@ -1158,7 +1158,7 @@ Rerun C++ SDK로 `.rrd` 기록을 만들고 Windows PowerShell에서 viewer로 �
 별도 문서에 정리했다:
 
 ```text
-docs/RERUN_CPP_VISUALIZATION_GUIDE.md
+docs/guides/rerun_cpp_visualization_guide.md
 ```
 
 핵심 실행 흐름은 WSL에서 `build_rerun/run_vio --rerun-save ...`로 기록 파일을 만들고,
@@ -1183,7 +1183,7 @@ Windows PowerShell에서 `python -m rerun_cli ...\vio_rerun.rrd`로 여는 방�
 같은 `2011_09_26` 날짜의 drive를 여러 개 돌릴 때:
 
 ```bash
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 
 BASE=config/kitti_raw_2011_09_26_drive_0001.yaml
 for drv in 0009 0011 0014 0017 0027 0028 0036 0046 0086; do
@@ -1314,7 +1314,7 @@ from pathlib import Path
 import numpy as np
 import sys
 
-PROJECT = Path("/mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw")
+PROJECT = Path("/mnt/d/02_research/04_cpp_seg_msckf_vio")
 DATA    = PROJECT / "data" / "kitti_raw"
 CONFIG  = PROJECT / "config"
 RESULTS = PROJECT / "results"
@@ -1434,7 +1434,7 @@ if __name__ == "__main__":
 실행:
 
 ```bash
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 python3 /tmp/auto_make_kitti_configs.py    # 위 스크립트를 임시로 저장해서 실행
 ```
 
@@ -1756,7 +1756,7 @@ GT를 측정값으로 다시 넣으면 ATE 평가가 무의미해지므로 **GPS
 ## 부록 A. 디렉터리 레이아웃 권장형
 
 ```
-06_cpp_LC-EKF_VIO_kitti_raw/
+04_cpp_seg_msckf_vio/
 ├── apps/                  # 빌드 시 자동
 ├── build/                 # cmake 빌드 산출물 (gitignore 권장)
 │   ├── run_vio
@@ -1776,7 +1776,8 @@ GT를 측정값으로 다시 넣으면 ATE 평가가 무의미해지므로 **GPS
 │       ├── 2011_09_30/{calib_*.txt, *_sync/}
 │       └── 2011_10_03/{calib_*.txt, *_sync/}
 ├── docs/
-│   └── KITTI_FULL_PIPELINE_GUIDE.md   # 이 파일
+│   └── guides/
+│       └── kitti_full_pipeline_guide.md   # 이 파일
 ├── include/, src/         # 코드
 ├── logs/                  # 일괄 실행 stdout
 ├── results/
@@ -1807,7 +1808,7 @@ GT를 측정값으로 다시 넣으면 ATE 평가가 무의미해지므로 **GPS
 sudo apt install -y build-essential cmake libeigen3-dev libopencv-dev libyaml-cpp-dev python3-numpy python3-matplotlib
 
 # 빌드
-cd /mnt/d/02_research/06_cpp_LC-EKF_VIO_kitti_raw
+cd /mnt/d/02_research/04_cpp_seg_msckf_vio
 mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
 
 # 단일 실행

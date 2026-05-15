@@ -68,6 +68,9 @@ StereoTracker::StereoTracker(const CameraParams& cam0,
                                  CV_32FC1, map1x_, map1y_);
 
     fx_rect_       = P0_.at<double>(0, 0);
+    fy_rect_       = P0_.at<double>(1, 1);
+    cx_rect_       = P0_.at<double>(0, 2);
+    cy_rect_       = P0_.at<double>(1, 2);
     // P1_[0,3] = -fx * baseline (translation term in rectified frame)
     baseline_rect_ = -P1_.at<double>(0, 3) / fx_rect_;
 
@@ -123,6 +126,7 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
         }
 
         prev_img_l_ = gray_l.clone();
+        prev_img_r_ = gray_r.clone();
         curr_pose_ = Pose{Matrix3d::Identity(), Vector3d::Zero(), true};
         initialized_ = true;
         return curr_pose_;
@@ -187,6 +191,7 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
 
     // ---- Update state (invariant: sizes always match) ----
     prev_img_l_    = gray_l.clone();
+    prev_img_r_    = gray_r.clone();
     prev_pts_l_    = tracked_pts;
     map_pts_world_ = tracked_map;
 
@@ -203,6 +208,16 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
     pose_out.t     = R0_rect_e.transpose() * pose.t;
     pose_out.R     = R0_rect_e.transpose() * pose.R * R0_rect_e;
     return pose_out;
+}
+
+Matrix3d StereoTracker::rectified_to_cam0_rotation() const {
+    Matrix3d R0_rect_e;
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            R0_rect_e(r, c) = R0_rect_.at<double>(r, c);
+        }
+    }
+    return R0_rect_e.transpose();
 }
 
 // ---- private helpers ----

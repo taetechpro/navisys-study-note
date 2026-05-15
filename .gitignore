@@ -14,6 +14,10 @@ results/
 logs/
 logs./
 
+# External reference code (read-only clones, not deps)
+references/*
+!references/README.md
+
 # Generated visualization / binary artifacts
 *.rrd
 *.ply
