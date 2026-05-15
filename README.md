@@ -1,4 +1,4 @@
-# C++ Seg-aided TC MSCKF VIO 연구 노트
+# C++ Seg-aided  연구 노트
 
 > **연구 주제**: Stereo + IMU gravity 기반 floor/wall segmentation 으로 추출한 plane constraint 를 TC MSCKF 에 통합해 texture-poor / dynamic 환경에서도 drift 를 억제하는 VIO.
 > **Baseline**: 본 프로젝트 안에 LC-EKF VIO (KITTI ATE ~153 cm) 가 비교군으로 보존됨.
