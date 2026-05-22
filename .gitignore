@@ -47,3 +47,14 @@ __pycache__/
 
 # Agent-local state
 .claude/
+
+# Obsidian per-user UI state (keep config/, plugins/, themes/)
+docs/.obsidian/workspace.json
+docs/.obsidian/workspace-mobile.json
+
+# Intermediate PDF build directories (regenerable from .tex)
+docs/insight/.pdf_build_*/
+
+# Practice clean-room build outputs
+practice/lidar_clean_room/lidar_test
+practice/lidar_clean_room/build/
