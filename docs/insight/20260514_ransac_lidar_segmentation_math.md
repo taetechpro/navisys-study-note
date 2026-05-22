@@ -1,3 +1,14 @@
+---
+title: "RANSAC LiDAR Floor/Wall Segmentation 수식·코드·직관"
+date: 2026-05-14
+type: insight
+tags: [ransac, lidar, segmentation]
+related:
+  - "[[20260504_kitti_lidar_floor_wall_segmentation]]"
+  - "[[Practice/stage_d_ransac]]"
+status: reviewed
+---
+
 # RANSAC 으로 LiDAR Floor/Wall Segmentation — 수식·코드·직관 정리
 
 > **2026-05-14** · `src/lidar/lidar_segmenter.cpp` 의 plane-RANSAC 이 *수학적으로 무엇을 풀고 있는가* 를 코드와 1:1 매핑해서 정리.

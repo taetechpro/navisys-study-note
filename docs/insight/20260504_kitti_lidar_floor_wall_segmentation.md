@@ -1,3 +1,18 @@
+---
+title: KITTI LiDAR Floor/Wall Segmentation 정리
+date: 2026-05-04
+type: insight
+tags:
+  - lidar
+  - segmentation
+  - kitti
+  - ransac
+related:
+  - "[[20260514_ransac_lidar_segmentation_math]]"
+  - "[[LidarSegmenter session_progress]]"
+status: reviewed
+---
+
 # KITTI LiDAR Floor/Wall Segmentation 정리 — 2026-05-04
 
 ## 1. 목표

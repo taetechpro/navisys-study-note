@@ -1,3 +1,13 @@
+---
+title: "Rerun C++ 시각화 연동 기록"
+date: 2026-05-14
+type: guide
+tags: [rerun, visualization, cpp]
+related:
+  - "[[kitti_full_pipeline_guide]]"
+status: reviewed
+---
+
 # Rerun C++ 시각화 연동 기록
 
 이 문서는 `run_vio` 실행 결과를 Rerun `.rrd` 파일로 저장하고 Windows PowerShell에서 여는 과정을 정리한다.

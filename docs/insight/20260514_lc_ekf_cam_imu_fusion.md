@@ -1,3 +1,15 @@
+---
+title: "LC-EKF VIO: Cam + IMU 융합으로 Pose 추정"
+date: 2026-05-14
+type: insight
+tags: [vio, lc-ekf, ekf, stereo, imu]
+related:
+  - "[[260430_lc_ekf_vio_insights]]"
+  - "[[20260501_stereo_rectification_left_feature_state]]"
+  - "[[20260520_vio_lvio_msckf_thinking_cheatsheet]]"
+status: reviewed
+---
+
 # LC-EKF VIO: Cam + IMU 융합으로 Pose 를 추정하는 정확한 개념과 수식
 
 > **2026-05-14** · 본 프로젝트 `D:\02_research\04_cpp_LC-EKF_VIO` 의 LC-EKF 구현이 실제로 어떻게 두 센서를 결합해 pose 를 만드는지를 코드–수식–직관–EKF 의미–C++ 노트가 한 자리에 묶인 형태로 정리.

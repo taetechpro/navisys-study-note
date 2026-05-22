@@ -1,3 +1,13 @@
+---
+title: "KITTI raw 풀 파이프라인 운용 가이드"
+date: 2026-05-14
+type: guide
+tags: [kitti, pipeline, build, run, vio]
+related:
+  - "[[rerun_cpp_visualization_guide]]"
+status: reviewed
+---
+
 # KITTI raw 풀 파이프라인 운용 가이드
 
 > **목적**: 본 문서는 `04_cpp_seg_msckf_vio` 프로젝트를 **외부 도움 없이**

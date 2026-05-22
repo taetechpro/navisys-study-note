@@ -1,3 +1,14 @@
+---
+title: "Stereo/RGB-D + IMU Floor/Wall Segmentation 계획"
+date: 2026-05-06
+type: insight
+tags: [stereo, imu, segmentation, plan, plane-constraint]
+related:
+  - "[[20260509_semantic_plane_normal_gravity_prior]]"
+  - "[[20260504_kitti_lidar_floor_wall_segmentation]]"
+status: reviewed
+---
+
 # Stereo/RGB-D + IMU Floor/Wall Segmentation 계획 정리 - 2026-05-06
 
 ## 1. Problem

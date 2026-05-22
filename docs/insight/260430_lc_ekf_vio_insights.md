@@ -1,3 +1,14 @@
+---
+title: "LC-EKF VIO 분석 인사이트"
+date: 2026-04-30
+type: insight
+tags: [vio, lc-ekf, baseline, ekf]
+related:
+  - "[[260430_ppt_guide]]"
+  - "[[20260514_lc_ekf_cam_imu_fusion]]"
+status: reviewed
+---
+
 # LC-EKF VIO 분석 인사이트 — 2026-04-30
 
 ## 1. sigma_vo 의미와 IMU-only 구현

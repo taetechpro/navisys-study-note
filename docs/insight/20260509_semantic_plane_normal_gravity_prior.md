@@ -1,3 +1,13 @@
+---
+title: "Semantic Plane Label과 Normal Vector"
+date: 2026-05-09
+type: insight
+tags: [segmentation, plane-constraint, gravity-prior]
+related:
+  - "[[20260506_stereo_rgbd_imu_floor_wall_segmentation_plan]]"
+status: reviewed
+---
+
 # Semantic Plane Label과 Normal Vector - 2026-05-09
 
 ## Insight

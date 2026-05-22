@@ -1,3 +1,13 @@
+---
+title: "Stereo Rectification과 Left 기준 Feature State"
+date: 2026-05-01
+type: insight
+tags: [stereo, feature, rectification, vio]
+related:
+  - "[[20260514_lc_ekf_cam_imu_fusion]]"
+status: reviewed
+---
+
 # Stereo Rectification과 Left 기준 Feature State — 2026-05-01
 
 ## 1. 결론

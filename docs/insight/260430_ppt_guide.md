@@ -1,3 +1,13 @@
+---
+title: "LC-EKF VIO 발표 구성 가이드"
+date: 2026-04-30
+type: insight
+tags: [vio, lc-ekf, presentation]
+related:
+  - "[[260430_lc_ekf_vio_insights]]"
+status: reviewed
+---
+
 # LC-EKF VIO 발표 구성 가이드 — 2026-04-30
 
 ## 핵심 프레임: "정보 흐름"으로 소개
