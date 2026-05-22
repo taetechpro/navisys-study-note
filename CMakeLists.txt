@@ -16,6 +16,7 @@ set(RERUN_SDK_URL
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenCV 4 REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(Boost REQUIRED COMPONENTS filesystem)
 
 if(ENABLE_RERUN)
     include(FetchContent)
@@ -35,13 +36,22 @@ add_library(vio_core
     src/frontend/stereo_tracker.cpp
     src/ekf/imu_propagator.cpp
     src/ekf/lc_ekf.cpp
+    # ---- msckf port (P1: types + utils + cam) ----
+    src/msckf/types/Landmark.cpp
+    src/msckf/utils/print.cpp
+    # ---- msckf port (P2: state + propagator + statehelper) ----
+    src/msckf/state/State.cpp
+    src/msckf/state/Propagator.cpp
+    src/msckf/state/StateHelper.cpp
 )
 target_link_libraries(vio_core
     PUBLIC
         Eigen3::Eigen
         ${OpenCV_LIBS}
         yaml-cpp
+        Boost::filesystem
 )
+target_compile_definitions(vio_core PUBLIC ROS_AVAILABLE=0)
 
 # ---- executables ----
 add_executable(run_vio apps/run_vio.cpp)
