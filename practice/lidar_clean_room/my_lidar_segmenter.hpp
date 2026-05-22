@@ -81,4 +81,51 @@ private:
 };
 
 std::vector<LidarPoint> load_kitti_velodyne_bin(const std::string& path);
+std::vector<LidarPoint> filter_roi(const std::vector<LidarPoint>& points,
+                                     const LidarSegmentationOptions& options);
 void write_segmented_ply(const std::string& path, const SegmentedCloud& cloud);
+
+// ─── Stage D: RANSAC 평면 fitting ──────────────────────
+struct Plane {
+    double a = 0.0;
+    double b = 0.0;
+    double c = 0.0;
+    double d = 0.0;
+    // 평면 방정식:  a*x + b*y + c*z + d = 0
+    // (a, b, c) 는 단위 법선벡터로 약속 (길이 = 1)
+};
+
+double point_to_plane_distance(const Plane& plane, const LidarPoint& p);
+
+bool fit_plane_3pt(const LidarPoint& p1,
+                     const LidarPoint& p2,
+                     const LidarPoint& p3,
+                     Plane& out_plane);
+std::size_t count_inliers(const Plane& plane,
+    const std::vector<LidarPoint>& points,
+    double threshold);
+bool ransac_plane(const std::vector<LidarPoint>& points,
+            int iterations,
+            double distance_threshold,
+            Plane& out_plane,
+            std::size_t& out_inlier_count);
+// ─── Stage E: Floor 분리 ───────────────────────────────
+bool segment_floor(const std::vector<LidarPoint>& points,
+                    const LidarSegmentationOptions& opt,
+                    Plane& out_plane,
+                    std::vector<std::size_t>& out_inlier_indices);
+
+// ─── Stage F: Wall 3 종 그리디 피링 ─────────────────────
+bool segment_wall(const std::vector<LidarPoint>& points,
+                const std::vector<bool>& used_mask,
+                const LidarSegmentationOptions& opt,
+                SegmentLabel target_wall,
+                Plane& out_plane,
+                std::vector<std::size_t>& out_inlier_indices);
+
+void segment_all_walls(const std::vector<LidarPoint>& points,
+                        const LidarSegmentationOptions& opt,
+                        const std::vector<std::size_t>& floor_inliers,
+                        std::vector<std::size_t>& out_left_inliers,
+                        std::vector<std::size_t>& out_right_inliers,
+                        std::vector<std::size_t>& out_front_inliers);

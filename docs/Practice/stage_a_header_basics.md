@@ -1,3 +1,19 @@
+---
+title: Stage A 학습 노트 — C++ 헤더의 기초
+date: 2026-05-13
+type: practice
+tags:
+  - cpp-learning
+  - header
+  - struct
+  - enum
+  - vector
+related:
+  - "[[LidarSegmenter session_progress]]"
+  - "[[stage_d_ransac]]"
+status: completed
+---
+
 # Stage A 학습 노트 — C++ 헤더의 기초
 
 > **본 노트의 범위**
