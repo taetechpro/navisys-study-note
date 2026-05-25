@@ -12,11 +12,11 @@ related:
 status: in_progress
 ---
 
-# TC MSCKF (OpenVINS) 포트 — 🚧 P2 완료 / 다음 P3 (2026-05-22)
+# TC MSCKF (OpenVINS) 포트 — 🚧 P3 완료 / 다음 P4 (2026-05-25)
 
-> **시작일:** 2026-05-22 (오늘) · **누적 작업:** 약 1.5 시간 (overview 작성 + P1 + P2)
-> **상태:** P1 + P2 통과 (2/6 stage), `libvio_core.a` 컴파일 OK
-> **다음:** `P3 시작` — update + feat 포트
+> **시작일:** 2026-05-22 · **누적 작업:** 약 2.5 시간 (overview 작성 + P1 + P2 + P3)
+> **상태:** P1 + P2 + P3 통과 (3/6 stage), `libvio_core.a` 컴파일 OK
+> **다음:** `P4 시작` — msckf_pipeline 어댑터 (Hamilton↔JPL 변환, stereo_tracker→Feature)
 > **전체 플랜:** [[../insight/20260522_tc_msckf_port_plan]] (P1~P6 마일스톤)
 
 ---
@@ -26,15 +26,15 @@ status: in_progress
 ```
 [P1] types + utils + cam 포트 .............. ✅ 완료 (2026-05-22)
 [P2] state + Propagator + StateHelper ...... ✅ 완료 (2026-05-22)
-[P3] update + feat 포트 .................... ⬜ 대기
+[P3] update + feat 포트 .................... ✅ 완료 (2026-05-25)
 [P4] msckf_pipeline 어댑터 ................. ⬜ 대기
 [P5] 첫 빌드·실행·디버그 ................... ⬜ 대기
 [P6] KITTI 0117 검증 + LC 비교 ............. ⬜ 대기
 ```
 
-진행률: **2/6 stage 완료 (33%)**.
+진행률: **3/6 stage 완료 (50%)**.
 
-빌드 상태: `libvio_core.a` **519 KB → 1.99 MB** (`+1.5 MB`), warnings 0, errors 0.
+빌드 상태: `libvio_core.a` **519 KB → 2.9 MB** (`+2.4 MB` 누적), warnings 0, errors 0.
 
 ---
 
@@ -121,9 +121,48 @@ status: in_progress
 
 ---
 
+## P3 결과 — update + feat 포트 (2026-05-25)
+
+### 산출물 (10 파일)
+
+| 위치 | 파일 수 | 내용 |
+|---|---|---|
+| `include/msckf/update/` | 3 hpp | UpdaterMSCKF, UpdaterHelper, UpdaterOptions |
+| `include/msckf/feat/` | 3 hpp | Feature, FeatureInitializer, FeatureInitializerOptions |
+| `src/msckf/update/` | 2 cpp | UpdaterMSCKF.cpp, UpdaterHelper.cpp |
+| `src/msckf/feat/` | 2 cpp | Feature.cpp, FeatureInitializer.cpp |
+
+### 좁힌 범위 결정 (FeatureHelper 제외)
+
+원 plan 의 P3 목록에는 `FeatureHelper.h` 가 포함되어 있었으나 포트 제외:
+- UpdaterMSCKF 의 시그니처가 `update(state, std::vector<Feature>&)` — Feature vector 만 직접 받음
+- FeatureHelper 는 본 repo 의 `frontend/stereo_tracker` 가 대체할 영역
+- FeatureHelper 포트하면 `FeatureDatabase.{h,cpp}` 까지 의존성 끌려 들어옴 → P4 어댑터 영역으로 미룸
+
+결과: P3 의 의존성 그래프가 *닫힘* — 모든 include 가 P1/P2/P3 안에서 해결.
+
+### 수치 변화
+- `libvio_core.a`: 1.99 MB → **2.9 MB** (`+0.9 MB`)
+- 컴파일 단위 +4 (UpdaterMSCKF, UpdaterHelper, Feature, FeatureInitializer)
+- 신규 export 심볼 14개 (UpdaterMSCKF::update, nullspace_project_inplace, measurement_compress_inplace 등)
+- Warnings 0, Errors 0
+
+### 적용한 패치
+1. Include 경로 sed 일괄 (P1+P2 패턴에 P3 신규 패턴 32개 추가)
+2. CMakeLists.txt: `find_package(Boost ... date_time)` 추가, `Boost::date_time` 링크, 4 cpp 등록
+3. `boost::math` 은 header-only — component 등록 불필요
+4. ROS 가드 사용처 0개 — 추가 어댑터 작업 없음
+
+### 발견·교훈
+- **첫 빌드 시도에서 통과** — 패치 없이 2.9 MB 라이브러리 완성. P1+P2 의 패턴이 P3 에 그대로 적용됨.
+- **chi² 임계값 표 lazy load 패턴** — UpdaterMSCKF 생성자에서 i=1..500 까지 미리 `boost::math::quantile` 으로 채워둠. 런타임 update 시점에는 표 lookup 만.
+- **R8 새로 발견 — Feature ↔ stereo_tracker 어댑터 필요** — FeatureHelper 를 제외했으므로 P4 에서 본 repo 의 stereo_tracker 출력을 `std::vector<std::shared_ptr<Feature>>` 로 변환하는 코드 작성 필요. Feature 의 (uvs, uvs_norm, timestamps, anchor_*) 필드 채우기.
+
+---
+
 ## 누적 자산 인덱스 (이번 사이클로 생긴 모든 것)
 
-### 코드 파일 (25개, 본 repo)
+### 코드 파일 (35개, 본 repo)
 
 | 경로 | 종류 | P 단계 |
 |---|---|---|
@@ -135,7 +174,11 @@ status: in_progress
 | `include/msckf/state/State.hpp` ~ `StateHelper.hpp` (4) | 헤더 | P2 |
 | `include/msckf/utils/opencv_yaml_parse.hpp` | 헤더 | P2 |
 | `src/msckf/state/State.cpp` (166), `Propagator.cpp` (1015), `StateHelper.cpp` (644) | 구현 | P2 |
-| `CMakeLists.txt` (편집: +Boost::filesystem, +ROS_AVAILABLE=0, +6 cpp) | 빌드 | P1+P2 |
+| `include/msckf/update/{UpdaterMSCKF,UpdaterHelper,UpdaterOptions}.hpp` (3) | 헤더 | P3 |
+| `include/msckf/feat/{Feature,FeatureInitializer,FeatureInitializerOptions}.hpp` (3) | 헤더 | P3 |
+| `src/msckf/update/{UpdaterMSCKF,UpdaterHelper}.cpp` (2) | 구현 | P3 |
+| `src/msckf/feat/{Feature,FeatureInitializer}.cpp` (2) | 구현 | P3 |
+| `CMakeLists.txt` (편집: +Boost::{filesystem,date_time}, +ROS_AVAILABLE=0, +10 cpp) | 빌드 | P1+P2+P3 |
 
 ### 인사이트·플랜 문서 (4개, 이번 세션 신규)
 
@@ -160,28 +203,31 @@ status: in_progress
 
 ---
 
-## 다음 액션 (P3)
+## 다음 액션 (P4)
 
 ### 트리거 단어
-**`P3 시작`** ← 사용자 발화하면 즉시 진행.
+**`P4 시작`** ← 사용자 발화하면 즉시 진행.
 
-### P3 범위
-- `ov_msckf/src/update/{UpdaterMSCKF, UpdaterHelper, UpdaterOptions}` (3 헤더 + 2 cpp)
-- `ov_core/src/feat/{Feature, FeatureInitializer, FeatureInitializerOptions, FeatureHelper}` (4 헤더 + 2 cpp)
-- 7 파일 쌍, 총 ~1500 줄 추가 예상
+### P4 범위 — msckf_pipeline 어댑터
+- `include/msckf_pipeline/msckf_pipeline.hpp` 신규 — OpenVINS VioManager 역할 대체
+- `src/msckf_pipeline/msckf_pipeline.cpp` 신규
+- **Quaternion 변환 어댑터** (Hamilton↔JPL) — R1 본격 처리
+- **stereo_tracker → Feature vector** 변환 (R8) — feat/FeatureHelper 를 안 가져왔으므로 본 repo 의 track 출력을 직접 `std::vector<std::shared_ptr<Feature>>` 로 구성
+- IMU 정지 초기화 → State 초기 공분산
+- `apps/run_vio.cpp` 에 `--engine=msckf` 옵션 추가 (LC 와 공존)
 
 ### 예상 시간
-포트 플랜은 6-10 시간 추정. **실제 P1+P2 의 속도 (15분/단계)** 를 감안하면 30분~1시간 가능.
+포트 플랜은 8-12 시간 추정. **P1~P3 의 실제 속도 + R1+R8 가 본격화** → 1-3 시간 가능 (어댑터는 단순 패치보다 *설계* 가 필요).
 
 ### 발생 가능 리스크
-- **R5 (Triangulation Gauss-Newton 수렴 실패)** — 본문 미사용이라 미발생.
-- Ceres 의존 — Feature/Triangulation 코드에 Ceres 가 있는지 P3 시작 시 첫 확인 항목.
-- chi² gate 에서 Boost::math 의존 — `find_package(Boost ... math)` 추가 여부 확인.
+- **R1 (JPL↔Hamilton)** — P4 의 핵심. 변환 함수의 부호·축 순서 실수가 무성성으로 누적.
+- **R8 (Feature 필드 구성)** — Feature 의 `uvs[cam_id]`, `uvs_norm[cam_id]`, `timestamps[cam_id]`, `anchor_cam_id`, `anchor_clone_timestamp` 정확히 채우기. 잘못하면 triangulation 실패.
+- **R6 (state size 폭주)** — clone 추가/제거 정책이 잘못되면 cov 무한 증가.
 
-### P3 완료 시 예상 상태
-- `libvio_core.a` ≈ **3 MB**
-- 컴파일 단위 +5 (UpdaterMSCKF, UpdaterHelper, Feature, FeatureInitializer + 작은 cpp들)
-- 모든 "vanilla MSCKF" 본체 컴파일 완료 — *동작* 은 아직 ❌ (P4 어댑터 필요)
+### P4 완료 시 예상 상태
+- `libvio_core.a` ≈ **3.2-3.5 MB**
+- `apps/run_vio.cpp` 가 LC 와 MSCKF 둘 다 진입 가능
+- *실행*까지는 OK (`run_vio --engine=msckf` 가 첫 frame 처리 시도). 트래젝토리 정확도는 P5 에서.
 
 ---
 

@@ -152,3 +152,88 @@ Warnings 0, Errors 0
 - Nullspace projection (Givens) 코드 그대로
 - Triangulation 의 Ceres 의존 ❌ 확인 (있다면 어떻게 처리할지 결정)
 - 모든 P2 코드와 함께 빌드 → libvio_core.a ~3 MB 예상
+
+---
+
+## P3 — Update + Feat 포트 (2026-05-25)
+
+### 산출물
+- `include/msckf/update/` — UpdaterMSCKF, UpdaterHelper, UpdaterOptions (3 헤더)
+- `include/msckf/feat/` — Feature, FeatureInitializer, FeatureInitializerOptions (3 헤더)
+- `src/msckf/update/` — UpdaterMSCKF.cpp, UpdaterHelper.cpp (2 cpp)
+- `src/msckf/feat/` — Feature.cpp, FeatureInitializer.cpp (2 cpp)
+
+총 **10 파일 (6 헤더 + 4 cpp)** 포트.
+
+### 좁힌 범위 결정 (FeatureHelper / FeatureDatabase 제외)
+
+원 plan §2.1 의 P3 목록에는 `feat/FeatureHelper.h` 가 포함되어 있었으나, **포트하지 않음**:
+
+- UpdaterMSCKF.cpp 의 시그니처는 `update(state, std::vector<std::shared_ptr<Feature>> &feature_vec)` — Feature 의 vector 만 직접 받음.
+- FeatureHelper 는 본 repo 의 `frontend/stereo_tracker` 가 대체할 영역 (track database 관리). P4 어댑터에서 stereo_tracker 출력을 `std::vector<Feature>` 로 변환하면 됨.
+- FeatureHelper 를 포함하면 `FeatureDatabase.{h,cpp}` 까지 의존성이 끌려 들어옴 — 이는 별도 컴포넌트로 P4 또는 별도 stage 에서 결정.
+
+결과: P3 의 의존성 그래프가 *닫힘* (P3 의 모든 include 가 P1/P2 또는 P3 안에서 해결됨). 빌드가 깔끔.
+
+### 적용한 패치
+
+1. **확장자 변경 + 복사**: `.h` → `.hpp`. 4 디렉토리 (`include/msckf/{update,feat}`, `src/msckf/{update,feat}`) 신규 생성.
+2. **Include 경로 재작성** (sed 일괄): 32개 패턴. 새로 추가된 패턴:
+   - `feat/Feature.h` → `msckf/feat/Feature.hpp` 외 4개
+   - `UpdaterMSCKF.h`, `UpdaterHelper.h`, `UpdaterOptions.h` (same-dir) → `msckf/update/` 풀패스
+   - 잔여 unrewritten quoted include **0개** (검증 완료).
+3. **CMakeLists.txt** 갱신:
+   - `find_package(Boost REQUIRED COMPONENTS filesystem date_time)` ← `date_time` 추가
+   - `target_link_libraries(... Boost::date_time)` 추가
+   - 신규 cpp 4개 등록 (Feature, FeatureInitializer, UpdaterHelper, UpdaterMSCKF)
+   - `boost::math` 은 header-only 라 component 등록 불필요
+
+### 변경 없음 (의도)
+
+- UpdaterMSCKF.cpp, UpdaterHelper.cpp, Feature.cpp, FeatureInitializer.cpp 본문 그대로.
+- chi² gating, null-space projection (Givens QR), measurement compression QR 모두 OpenVINS 원본 그대로.
+- chi² 임계값 표 (`chi_squared_table[i]`) 생성자에서 미리 채워둠 — 호출 시점 boost::math::quantile 안 불러서 빠름.
+- ROS 가드 0개 (P3 sources 에는 ROS_AVAILABLE 매크로 사용처 없음).
+
+### 빌드 결과
+
+```
+[ 76%] Building CXX ... src/msckf/feat/Feature.cpp.o
+[ 88%] Building CXX ... src/msckf/feat/FeatureInitializer.cpp.o
+[ 88%] Building CXX ... src/msckf/update/UpdaterHelper.cpp.o
+[ 94%] Building CXX ... src/msckf/update/UpdaterMSCKF.cpp.o
+[100%] Linking CXX static library libvio_core.a
+[100%] Built target vio_core
+```
+
+`libvio_core.a` **1.99 MB → 2.9 MB** (+0.9 MB). **Warnings 0, errors 0**.
+
+`nm` 검증: P3 핵심 함수 14개 (UpdaterMSCKF::update, UpdaterHelper::get_feature_jacobian_full / nullspace_project_inplace / measurement_compress_inplace, FeatureInitializer 등) 정상 export.
+
+### 검증 범위
+
+- 컴파일 + 링크 ✅
+- 런타임 동작 ❌. P5 에서:
+  - UpdaterMSCKF 의 chi² gating: i=1..500 까지 임계값 표 초기화 (생성자) → 첫 update 호출 시점 0이 아닌 임계값 사용 확인
+  - Feature 의 anchor frame timestamp 검색 (`timestamps[cam_id]` 순회)
+  - FeatureInitializer 의 multi-view triangulation 수렴 여부
+
+### 리스크 업데이트
+
+- **R1 (JPL ↔ Hamilton 컨벤션)**: P3 단계에서 *접촉* — UpdaterMSCKF 가 Pose JPL state 와 직접 상호작용. 그러나 LC EKF 의 Hamilton 코드와는 여전히 격리. P4 어댑터에서 본격 충돌.
+- **R3 (Windows MSVC)**: 미관측. WSL gcc 빌드 통과.
+- **R7 (빌드 환경 path)**: 영향 없음. 모든 빌드 WSL.
+- **새 발견 (R8) — Feature ↔ stereo_tracker 어댑터 필요**: P3 의 FeatureHelper 를 의도적으로 제외했으므로, P4 에서 본 repo `frontend/stereo_tracker` 의 track 출력을 OpenVINS `std::vector<std::shared_ptr<ov_core::Feature>>` 로 변환하는 어댑터 작성 필요. Feature 의 필드 (uvs, uvs_norm, timestamps, anchor_*) 채우기 + JPL 변환.
+
+### 다음 트리거
+
+**`P4 시작`** — `msckf_pipeline` 어댑터 작성. 본 repo 의 `io/`, `frontend/`, `apps/run_vio.cpp` 와 OpenVINS State / Propagator / UpdaterMSCKF 를 연결.
+
+예상 작업 (~8-12 시간):
+- `include/msckf_pipeline/msckf_pipeline.hpp` 신규 — VioManager 대체
+- `src/msckf_pipeline/msckf_pipeline.cpp` 신규
+- Quaternion 변환 어댑터 (Hamilton ↔ JPL) — R1 본격 해결
+- stereo_tracker → Feature vector 변환 (R8)
+- IMU 정지 초기화 → State 초기 공분산
+- `apps/run_vio.cpp` 에 `--engine=msckf` 옵션 추가 (LC 와 공존)
+- 빌드 통과 후 run_vio 실행만 가능한 상태가 목표 (트래젝토리 출력은 P5)
