@@ -16,7 +16,7 @@ set(RERUN_SDK_URL
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenCV 4 REQUIRED)
 find_package(yaml-cpp REQUIRED)
-find_package(Boost REQUIRED COMPONENTS filesystem)
+find_package(Boost REQUIRED COMPONENTS filesystem date_time)
 
 if(ENABLE_RERUN)
     include(FetchContent)
@@ -43,6 +43,11 @@ add_library(vio_core
     src/msckf/state/State.cpp
     src/msckf/state/Propagator.cpp
     src/msckf/state/StateHelper.cpp
+    # ---- msckf port (P3: feat + update) ----
+    src/msckf/feat/Feature.cpp
+    src/msckf/feat/FeatureInitializer.cpp
+    src/msckf/update/UpdaterHelper.cpp
+    src/msckf/update/UpdaterMSCKF.cpp
 )
 target_link_libraries(vio_core
     PUBLIC
@@ -50,6 +55,7 @@ target_link_libraries(vio_core
         ${OpenCV_LIBS}
         yaml-cpp
         Boost::filesystem
+        Boost::date_time
 )
 target_compile_definitions(vio_core PUBLIC ROS_AVAILABLE=0)
 
