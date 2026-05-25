@@ -12,11 +12,11 @@ related:
 status: in_progress
 ---
 
-# TC MSCKF (OpenVINS) 포트 — 🚧 P3 완료 / 다음 P4 (2026-05-25)
+# TC MSCKF (OpenVINS) 포트 — 🚧 P5 통과, P6 정확도 디버깅 진행 중 (2026-05-25)
 
-> **시작일:** 2026-05-22 · **누적 작업:** 약 2.5 시간 (overview 작성 + P1 + P2 + P3)
-> **상태:** P1 + P2 + P3 통과 (3/6 stage), `libvio_core.a` 컴파일 OK
-> **다음:** `P4 시작` — msckf_pipeline 어댑터 (Hamilton↔JPL 변환, stereo_tracker→Feature)
+> **시작일:** 2026-05-22 · **누적 작업:** 약 5 시간 (overview + P1~P5)
+> **상태:** P1+P2+P3+P4+P5 (5/6 stage). KITTI 0117 660 frame **crash-free**. LC 153 cm vs MSCKF 53279 cm (발산).
+> **다음:** `P6 디버그 시작` — R1 quat 변환, chi² gate, FEJ, NoiseManager 추적.
 > **전체 플랜:** [[../insight/20260522_tc_msckf_port_plan]] (P1~P6 마일스톤)
 
 ---
@@ -27,14 +27,19 @@ status: in_progress
 [P1] types + utils + cam 포트 .............. ✅ 완료 (2026-05-22)
 [P2] state + Propagator + StateHelper ...... ✅ 완료 (2026-05-22)
 [P3] update + feat 포트 .................... ✅ 완료 (2026-05-25)
-[P4] msckf_pipeline 어댑터 ................. ⬜ 대기
-[P5] 첫 빌드·실행·디버그 ................... ⬜ 대기
-[P6] KITTI 0117 검증 + LC 비교 ............. ⬜ 대기
+[P4] msckf_pipeline 어댑터 ................. ✅ 완료 (2026-05-25)
+[P5] 첫 빌드·실행·디버그 ................... ✅ crash-free (2026-05-25)
+[P6] KITTI 0117 검증 + LC 비교 ............. 🚧 발산 디버깅 단계
 ```
 
-진행률: **3/6 stage 완료 (50%)**.
+진행률: **5/6 stage 통과 (83%)**, P6 의 *crash-free 단계* 까지 도달. *ATE 개선* 단계 진행 중.
 
-빌드 상태: `libvio_core.a` **519 KB → 2.9 MB** (`+2.4 MB` 누적), warnings 0, errors 0.
+빌드 상태: `libvio_core.a` **519 KB → 3.0 MB** (누적 +2.5 MB), warnings 0, errors 0.
+
+KITTI 0117 첫 결과:
+- **LC EKF**: ATE **152.96 cm** (기존 메모리의 ~153 cm 와 정확히 일치, baseline 보존됨)
+- **MSCKF**: ATE **53279 cm** (발산 — R1 본격 발현 + 어댑터 튜닝 필요)
+- 660 frame 모두 crash 없이 완주. MSCKF update 매 frame 호출 (11~52 features/frame).
 
 ---
 
@@ -203,31 +208,26 @@ status: in_progress
 
 ---
 
-## 다음 액션 (P4)
+## 다음 액션 (P6 정확도 디버깅)
 
 ### 트리거 단어
-**`P4 시작`** ← 사용자 발화하면 즉시 진행.
+**`P6 디버그 시작`** ← 사용자 발화하면 즉시 진행.
 
-### P4 범위 — msckf_pipeline 어댑터
-- `include/msckf_pipeline/msckf_pipeline.hpp` 신규 — OpenVINS VioManager 역할 대체
-- `src/msckf_pipeline/msckf_pipeline.cpp` 신규
-- **Quaternion 변환 어댑터** (Hamilton↔JPL) — R1 본격 처리
-- **stereo_tracker → Feature vector** 변환 (R8) — feat/FeatureHelper 를 안 가져왔으므로 본 repo 의 track 출력을 직접 `std::vector<std::shared_ptr<Feature>>` 로 구성
-- IMU 정지 초기화 → State 초기 공분산
-- `apps/run_vio.cpp` 에 `--engine=msckf` 옵션 추가 (LC 와 공존)
+### P6 디버깅 범위 (가장 가능성 큰 순)
+1. **R1 quat 변환 검증** — 첫 frame state_->_imu->Rot() vs R0_wi^T print 비교. 부호/transpose 오류 시 propagate 의 gravity 가 *반대 방향* 더해져 지수 발산.
+2. **chi² gate 효율** — `msckf_updates_` 횟수 vs 시도 횟수. effective update 가 0 이면 IMU only propagate → 발산.
+3. **첫 10 frame plot** — MSCKF pos vs LC pos vs GT. *발산 시작 시점* 확인.
+4. **FEJ 영향** — `do_fej=false` 로 재실행. KITTI 의 큰 initial uncertainty 에 FEJ 가 안 맞을 가능성.
+5. **NoiseManager 튜닝** — 검사 결과 KITTI yaml 과 동일하지만 *KITTI 가 더 noisy* 가능 → sigma_a/w 증가 시도.
 
-### 예상 시간
-포트 플랜은 8-12 시간 추정. **P1~P3 의 실제 속도 + R1+R8 가 본격화** → 1-3 시간 가능 (어댑터는 단순 패치보다 *설계* 가 필요).
+### 다음 액션 (백업)
 
-### 발생 가능 리스크
-- **R1 (JPL↔Hamilton)** — P4 의 핵심. 변환 함수의 부호·축 순서 실수가 무성성으로 누적.
-- **R8 (Feature 필드 구성)** — Feature 의 `uvs[cam_id]`, `uvs_norm[cam_id]`, `timestamps[cam_id]`, `anchor_cam_id`, `anchor_clone_timestamp` 정확히 채우기. 잘못하면 triangulation 실패.
-- **R6 (state size 폭주)** — clone 추가/제거 정책이 잘못되면 cov 무한 증가.
+P6 디버깅이 막힐 경우 (예: 2-3 시간 안에 ATE 가 LC 153cm 근처로 안 떨어지면):
+- 옵션 A: stereo mode (cam_id=1 도 추가). multi-camera baseline 으로 triangulation 안정화.
+- 옵션 B: OpenVINS TrackKLT 포트 — 본 repo stereo_tracker 대신 *검증된 frontend*. ~2000 줄 추가.
+- 옵션 C: ov_msckf 의 *VioManager 의 KITTI config* 가 있는지 검색 — 만약 있다면 NoiseManager / StateOptions 의 *KITTI-specific tuning* 가져옴.
 
-### P4 완료 시 예상 상태
-- `libvio_core.a` ≈ **3.2-3.5 MB**
-- `apps/run_vio.cpp` 가 LC 와 MSCKF 둘 다 진입 가능
-- *실행*까지는 OK (`run_vio --engine=msckf` 가 첫 frame 처리 시도). 트래젝토리 정확도는 P5 에서.
+### P6 의 *crash-free* 단계는 완료. *정확도* 단계가 남음. 자세한 디버깅 순서는 [[../insight/20260522_tc_msckf_port_journal]] 의 P5 entry 참고.
 
 ---
 

@@ -58,3 +58,6 @@ docs/insight/.pdf_build_*/
 # Practice clean-room build outputs
 practice/lidar_clean_room/lidar_test
 practice/lidar_clean_room/build/
+
+# Throwaway debug configs (prefixed with _)
+config/_*.yaml

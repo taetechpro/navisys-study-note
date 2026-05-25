@@ -155,6 +155,57 @@ Warnings 0, Errors 0
 
 ---
 
+## P4 + P5 — 어댑터 + 첫 실행 (2026-05-25)
+
+### 산출물
+- `include/frontend/stereo_tracker.hpp/.cpp` — `prev_track_ids_` + `next_id_` 추가, KLT/PnP/ORB 모든 분기에서 ID 동기. LC 의 pose 출력은 변경 없음.
+- `include/msckf_pipeline/msckf_pipeline.hpp` (97 줄) + `src/msckf_pipeline/msckf_pipeline.cpp` (~210 줄) — OpenVINS VioManager 역할 대체.
+- `apps/run_vio.cpp` — `--engine=lc|msckf` CLI, 두 engine 병렬 wiring.
+
+### 좁힌 frontend 결정 (3-옵션 분석)
+사용자 선택 (A): StereoTracker 확장. (B) OpenVINS TrackKLT 추가 포트 (~2000 줄) 은 별도 stage. (C) single-view feature 는 MSCKF 본질 상실. (A) 가 LC 영향 최소 + MSCKF/LC 가 같은 frontend 공유.
+
+### 어댑터 핵심 변환
+- **Hamilton ↔ JPL** (R1 본격): `IMU::set_value` 는 16-dim `[q(4), p(3), v(3), bg(3), ba(3)]`. JPL q 는 *I_R_G* (IMU ← Global) 표현. 따라서 `q = rot_2_quat(R0_wi.transpose())`.
+- **Camera extrinsic**: `_calib_IMUtoCAM[0]->set_value([q_CtoI, p_IinC])`. T_cam0_imu (cam ← imu) 의 R/t 를 그대로 7-dim.
+- **Camera intrinsic**: rectified 픽셀 사용. CamRadtan with `[fx, fy, cx, cy, 0, 0, 0, 0]`.
+- **monocular MSCKF**: cam_id=0 만 사용. uvs_norm = `((u-cx)/fx, (v-cy)/fy)`.
+
+### P5 — 첫 실행 디버그 (3 boundary fix)
+
+KITTI 0117 첫 실행 시 *두 번째 frame 에서 abort*. 진단 출력 추가하며 좁힌 결과 3개 문제:
+
+1. **첫 frame 의 dt=0 propagate**: Propagator::propagate_and_clone 가 dt<=0 면 `std::exit(EXIT_FAILURE)`. 어댑터 생성자가 state_->_timestamp = t0 설정 → feed_camera(t0) 에서 같은 시점 호출. **해결**: first_camera 분기에서 propagate_and_clone 우회, `StateHelper::augment_clone(state, 0)` 직접 호출.
+2. **IMU buffer 의 boundary sample 부재**: main loop 의 incremental IMU feed (`imu.t <= cam.t` 까지) 가 *time1 이후 boundary IMU 없음* → assert. **해결**: `--engine=msckf` 일 때 *전체 IMU 스트림* 을 시작 시 한 번에 feed.
+3. **t0 이전 IMU 도 필요**: KITTI IMU rate (~6Hz) < cam rate (~10Hz). select_imu_readings 가 time0 interp 위해 *time0 이전 IMU 1개* 필요. **해결**: pre-t0 IMU 도 buffer 에 feed (skip 안 함).
+
+### 빌드 + 실행 결과
+
+- `libvio_core.a` 3.0 MB (+0.1 MB from P3), warnings 0, errors 0.
+- KITTI 0117 660 frame **crash-free**. MSCKF update 매 frame 호출됨 (to_update 11~52 features).
+- **LC ATE 153 cm** (기존 baseline 일치). **MSCKF ATE 53279 cm** — **발산**.
+
+### 정확도 미달의 원인 후보 (다음 디버깅 사이클)
+
+frame 600 시점: LC pos = (181, -108, 15) m, MSCKF pos = (1469, -599, -211) m. 약 8x 발산.
+
+가능 원인:
+- **R1 quat 변환** (가장 큰 의심) — 부호 오류면 propagate 시 gravity 가 *반대 방향* 으로 더해짐 → 지수 발산
+- **Camera extrinsic 부호** — _calib_IMUtoCAM 의 q/t 컨벤션 잘못 시 update 가 wrong correction
+- **chi² gate** — `chi2_multipler=5` 가 KITTI 에 안 맞을 가능성. Effective update 횟수 측정 필요
+- **NoiseManager default** — 검사 결과 KITTI config 와 동일. 의심 낮음
+- **FEJ 영향** — `do_fej=true` 가 KITTI 의 큰 initial uncertainty 에 안 맞을 가능성
+
+### 다음 트리거
+
+**`P6 디버그 시작`** — 정확도 추적. 권장 순서:
+1. R1 검증: 첫 frame 의 state_->_imu->Rot() 가 R0_wi^T 와 같은지 print 비교.
+2. msckf_updates_ 횟수 vs frame 수 비교 — chi² gate 가 dropping rate.
+3. 첫 10 frame 의 MSCKF pos vs LC pos plot — 발산 시작 시점 확인.
+4. FEJ 끄고 (`do_fej=false`) 재실행. 5. NoiseManager sigma_a/sigma_w 를 KITTI 에 더 맞게 (KITTI 가 noisier).
+
+---
+
 ## P3 — Update + Feat 포트 (2026-05-25)
 
 ### 산출물
