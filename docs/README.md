@@ -26,8 +26,9 @@ LC-EKF VIO 구현, 실험, 인사이트, 클린룸 학습을 모은 작업 vault
 | 영역 | MOC 노트 | 주제 |
 |---|---|---|
 | 🧠 **판단/실험 기록** | [[insight/README]] | 날짜별 결정, 실험 회고, 구현 인사이트 |
-| 🎓 **학습 노트** | [[LidarSegmenter session_progress]] | LidarSegmenter 클린룸 재구현 (Stage A~H 완료) |
+| 🎓 **학습 노트 MOC** | [[Practice/README]] | 트랙별 학습 진행 추적 (lidar 완료, msckf 진행) |
 | 🚧 **TC MSCKF 포트 진행** | [[Practice/tc_msckf_port_progress]] | OpenVINS 핵심 포트 P1~P6 (현재 2/6 완료) |
+| 🗓 **9주 연구 로드맵** | [[PLAN/README]] | Phase 0 (W1) → Phase 3 (W7~W9) 일자별 일정 |
 | 🛠 **실행 가이드** | [[guides/README]] | 빌드, 파이프라인, Rerun 시각화 |
 | 📘 **매뉴얼** | [[manuals/README]] | LaTeX 원본, 긴 절차서, PDF |
 | 📚 **이론 자료** | [[theory/README]] | 외부 논문, 수식 배경 |
@@ -60,7 +61,8 @@ LC-EKF VIO 구현, 실험, 인사이트, 클린룸 학습을 모은 작업 vault
 | Path | Purpose | MOC |
 |---|---|---|
 | `insight/` | 날짜별 판단/실험 노트, 구현 인사이트 | [[insight/README]] |
-| `Practice/` | 클린룸 학습 진행 + 노트 | [[LidarSegmenter session_progress]] |
+| `Practice/` | 학습 진행 추적 + Stage 노트 (lidar, msckf) | [[Practice/README]] |
+| `PLAN/` | 9주 연구 로드맵 (Phase 0~3) | [[PLAN/README]] |
 | `guides/` | 실행 방법 / 파이프라인 / Rerun | [[guides/README]] |
 | `manuals/` | 긴 매뉴얼, LaTeX 원본, 생성 PDF | [[manuals/README]] |
 | `theory/` | 논문, 방법론, 수식 배경 | [[theory/README]] |
