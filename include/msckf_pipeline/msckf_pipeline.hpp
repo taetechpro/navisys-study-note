@@ -96,4 +96,9 @@ private:
 
     bool first_camera_ = true;
     int  msckf_updates_ = 0;
+
+    // Cache for IMU boundary padding (Propagator needs a sample at/after cam.t)
+    double          last_imu_t_ = -1.0;
+    Eigen::Vector3d last_imu_w_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d last_imu_a_ = Eigen::Vector3d::Zero();
 };

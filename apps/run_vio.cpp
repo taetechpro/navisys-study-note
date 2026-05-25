@@ -911,6 +911,25 @@ int main(int argc, char** argv) {
             ++imu_idx;
         }
 
+        // MSCKF wants the full IMU stream buffered upfront so the propagator
+        // can select bracketing samples (including one *before* time0) for any
+        // cam.timestamp. We feed the entire IMU stream from index 0, not from
+        // the post-init imu_idx, so pre-t0 samples are available for boundary
+        // interpolation. LC EKF (else branch) keeps the incremental schedule.
+        if (use_msckf) {
+            int pre_count = 0;
+            for (size_t k = 0; k < imu_data.size(); ++k) {
+                const auto& imu = imu_data[k];
+                msckf->feed_imu(imu.timestamp, imu.gyro, imu.accel);
+                imu_ts_log.push_back(imu.timestamp);
+                imu_gyro_log.push_back(imu.gyro);
+                imu_accel_log.push_back(imu.accel);
+                ++pre_count;
+            }
+            imu_idx = imu_data.size();
+            std::cout << "[msckf] pre-loaded " << pre_count << " IMU samples\n";
+        }
+
         int frame_count = 0;
         int imu_count = 0;
         int lidar_segmented_frames = 0;
@@ -927,11 +946,8 @@ int main(int argc, char** argv) {
                 imu_gyro_log.push_back(imu.gyro);
                 imu_accel_log.push_back(imu.accel);
                 ++imu_count;
-                if (use_msckf) {
-                    msckf->feed_imu(imu.timestamp, imu.gyro, imu.accel);
-                } else {
-                    ekf.propagate(imu.timestamp, imu.gyro, imu.accel);
-                }
+                // MSCKF already received all IMU upfront; here we only feed LC.
+                ekf.propagate(imu.timestamp, imu.gyro, imu.accel);
             }
 
             const cv::Mat img_l = cv::imread(cam.img_l, cv::IMREAD_COLOR);

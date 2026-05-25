@@ -123,20 +123,27 @@ void MsckfPipeline::feed_imu(double t,
     data.wm = gyro;
     data.am = accel;
     prop_->feed_imu(data);
+    last_imu_t_ = t;
+    last_imu_w_ = gyro;
+    last_imu_a_ = accel;
 }
 
 void MsckfPipeline::feed_camera(double t,
                                 const std::vector<TrackedFeat>& tracked) {
-
-    // ---- Step 1: propagate + clone (first call just records t0) ----
+    // ---- Step 1: propagate + clone ----
+    // OpenVINS Propagator::propagate_and_clone aborts on dt<=0, so we cannot
+    // re-call it at the constructor-supplied t0. For the very first camera
+    // frame we just augment a clone at t0 directly. From the second frame on,
+    // we let the propagator advance state to t and clone there.
+    //
+    // Also: select_imu_readings inside the propagator needs an IMU sample at
+    // or after `t` to close the boundary. The host main loop only feeds IMU
+    // <= cam.timestamp, so we duplicate the most recent IMU at time `t`
+    // before propagating. dt of that final segment is small (typically the
+    // few-ms gap between the last 100Hz sample and the camera frame).
     if (first_camera_) {
-        // State was already created at t0; nothing to propagate. We still need
-        // a clone at t0 so future feature observations have a clone to attach
-        // to. The cleanest path is to wait until the *second* frame (when we
-        // have IMU between t0 and t1) before clone augment. So just skip.
         first_camera_ = false;
-        // Initialize the first clone at t0 manually via propagate (dt=0 path).
-        prop_->propagate_and_clone(state_, t);
+        ov_msckf::StateHelper::augment_clone(state_, Eigen::Vector3d::Zero());
     } else {
         prop_->propagate_and_clone(state_, t);
     }
