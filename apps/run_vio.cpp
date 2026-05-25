@@ -31,6 +31,7 @@
 #include "io/euroc_reader.hpp"
 #include "io/kitti_raw_reader.hpp"
 #include "lidar/lidar_segmenter.hpp"
+#include "msckf_pipeline/msckf_pipeline.hpp"
 
 namespace fs = std::filesystem;
 
@@ -57,6 +58,7 @@ struct CliOptions {
     std::string depth_source = "stereo";
     int segment_every = 1;
     bool segment_every_set = false;
+    std::string engine = "lc";  // "lc" (default, baseline) | "msckf" (TC port)
 };
 
 struct InitialState {
@@ -80,7 +82,8 @@ void print_usage(const char* exe) {
         << "  --segment-lidar               Segment KITTI Velodyne frames into floor/wall classes\n"
         << "  --segment-depth               Segment stereo depth into floor/wall classes\n"
         << "  --depth-source <stereo>       Depth source for --segment-depth (default: stereo)\n"
-        << "  --segment-every <N>           Segment every Nth frame (default: 1)\n";
+        << "  --segment-every <N>           Segment every Nth frame (default: 1)\n"
+        << "  --engine <lc|msckf>           VIO engine (default: lc). msckf uses the ported OpenVINS TC MSCKF.\n";
 }
 
 int parse_nonnegative_int(const std::string& value, const std::string& option_name) {
@@ -151,6 +154,14 @@ CliOptions parse_cli(int argc, char** argv) {
             }
             options.segment_every = parse_positive_int(argv[++i], arg);
             options.segment_every_set = true;
+        } else if (arg == "--engine") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--engine requires lc or msckf");
+            }
+            options.engine = argv[++i];
+            if (options.engine != "lc" && options.engine != "msckf") {
+                throw std::runtime_error("--engine must be 'lc' or 'msckf'");
+            }
         } else if (arg == "-h" || arg == "--help") {
             options.config_path.clear();
             return options;
@@ -849,6 +860,23 @@ int main(int argc, char** argv) {
                                imu_noise, init.g_world);
         LcEkf ekf(imu_prop, cam0.T_cam_imu, sigma_vo);
         StereoTracker tracker(cam0, cam1);
+
+        // ---- MSCKF engine (optional, parallel to LC) ----
+        std::unique_ptr<MsckfPipeline> msckf;
+        const bool use_msckf = (cli.engine == "msckf");
+        if (use_msckf) {
+            msckf = std::make_unique<MsckfPipeline>(
+                init.t0,
+                init.R0, init.p0, init.v0, init.bg0, init.ba0,
+                cam0.T_cam_imu,
+                tracker.rectified_fx(), tracker.rectified_fy(),
+                tracker.rectified_cx(), tracker.rectified_cy(),
+                cam0.width, cam0.height,
+                std::abs(init.g_world.z()));
+            std::cout << "[engine] MSCKF (TC, ported OpenVINS)\n";
+        } else {
+            std::cout << "[engine] LC EKF (baseline)\n";
+        }
         StereoDepthGeometry depth_geometry;
         depth_geometry.fx = tracker.rectified_fx();
         depth_geometry.fy = tracker.rectified_fy();
@@ -899,7 +927,11 @@ int main(int argc, char** argv) {
                 imu_gyro_log.push_back(imu.gyro);
                 imu_accel_log.push_back(imu.accel);
                 ++imu_count;
-                ekf.propagate(imu.timestamp, imu.gyro, imu.accel);
+                if (use_msckf) {
+                    msckf->feed_imu(imu.timestamp, imu.gyro, imu.accel);
+                } else {
+                    ekf.propagate(imu.timestamp, imu.gyro, imu.accel);
+                }
             }
 
             const cv::Mat img_l = cv::imread(cam.img_l, cv::IMREAD_COLOR);
@@ -911,14 +943,33 @@ int main(int argc, char** argv) {
 
             const auto pose = tracker.process(img_l, img_r);
             const Eigen::Vector3d p_world_cam = R_WC0 * pose.t + t_WC0;
-            if (pose.valid && frame_count > 0) {
+            if (use_msckf) {
+                // Feed all currently tracked features (rectified left pixels + persistent IDs)
+                std::vector<MsckfPipeline::TrackedFeat> feats;
+                feats.reserve(tracker.tracked_points().size());
+                const auto& ids = tracker.tracked_ids();
+                const auto& pts = tracker.tracked_points();
+                for (size_t i = 0; i < pts.size(); ++i) {
+                    feats.push_back({ids[i], pts[i].x, pts[i].y});
+                }
+                msckf->feed_camera(cam.timestamp, feats);
+            } else if (pose.valid && frame_count > 0) {
                 ekf.update_vo(p_world_cam);
             }
 
-            traj_est.push_back(ekf.position());
-            traj_vel.push_back(ekf.velocity());
-            traj_euler.push_back(rot_to_euler_deg(ekf.orientation()));
-            traj_quat.push_back(Eigen::Quaterniond(ekf.orientation()).normalized());
+            // Pull trajectory state from whichever engine is active
+            Eigen::Vector3d cur_p, cur_v;
+            Eigen::Matrix3d cur_R;
+            if (use_msckf) {
+                const auto mpose = msckf->latest_pose();
+                cur_p = mpose.p; cur_v = mpose.v; cur_R = mpose.R;
+            } else {
+                cur_p = ekf.position(); cur_v = ekf.velocity(); cur_R = ekf.orientation();
+            }
+            traj_est.push_back(cur_p);
+            traj_vel.push_back(cur_v);
+            traj_euler.push_back(rot_to_euler_deg(cur_R));
+            traj_quat.push_back(Eigen::Quaterniond(cur_R).normalized());
             traj_feat.push_back(tracker.tracked_count());
             traj_ts.push_back(cam.timestamp);
 

@@ -122,6 +122,7 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
             if (z > 0.1 && z < 50.0) {
                 prev_pts_l_.push_back(kept_l[i]);
                 map_pts_world_.push_back(pts3d[i]); // world = cam0_0 frame
+                prev_track_ids_.push_back(next_id_++);
             }
         }
 
@@ -136,13 +137,15 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
     std::vector<uchar> temp_ok;
     auto curr_pts = klt_track(prev_img_l_, gray_l, prev_pts_l_, temp_ok);
 
-    // Filter: keep valid tracked + aligned map points
-    std::vector<cv::Point2f> tracked_pts;
-    std::vector<Vector3d>    tracked_map;
+    // Filter: keep valid tracked + aligned map points + IDs
+    std::vector<cv::Point2f>    tracked_pts;
+    std::vector<Vector3d>       tracked_map;
+    std::vector<std::size_t>    tracked_ids;
     for (size_t i = 0; i < temp_ok.size(); ++i) {
         if (temp_ok[i]) {
             tracked_pts.push_back(curr_pts[i]);
             tracked_map.push_back(map_pts_world_[i]);
+            tracked_ids.push_back(prev_track_ids_[i]);
         }
     }
 
@@ -157,15 +160,18 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
             pose.valid = true;
             curr_pose_ = pose;
 
-            // Keep only inlier correspondences
-            std::vector<cv::Point2f> in_pts;
-            std::vector<Vector3d>    in_map;
+            // Keep only inlier correspondences (incl. IDs)
+            std::vector<cv::Point2f>    in_pts;
+            std::vector<Vector3d>       in_map;
+            std::vector<std::size_t>    in_ids;
             for (int idx : inliers) {
                 in_pts.push_back(tracked_pts[idx]);
                 in_map.push_back(tracked_map[idx]);
+                in_ids.push_back(tracked_ids[idx]);
             }
             tracked_pts = in_pts;
             tracked_map = in_map;
+            tracked_ids = in_ids;
         }
     }
 
@@ -185,15 +191,17 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
                 if (z < 0.1 || z > 50.0) continue;
                 tracked_pts.push_back(match.pts_l[i]);
                 tracked_map.push_back(pose.R * pts3d_cam[i] + pose.t);
+                tracked_ids.push_back(next_id_++);
             }
         }
     }
 
     // ---- Update state (invariant: sizes always match) ----
-    prev_img_l_    = gray_l.clone();
-    prev_img_r_    = gray_r.clone();
-    prev_pts_l_    = tracked_pts;
-    map_pts_world_ = tracked_map;
+    prev_img_l_      = gray_l.clone();
+    prev_img_r_      = gray_r.clone();
+    prev_pts_l_      = tracked_pts;
+    map_pts_world_   = tracked_map;
+    prev_track_ids_  = tracked_ids;
 
     // Convert pose from rectified frame back to original cam0 frame for output.
     // Internally we work in rectified frame (3D points, map, curr_pose_). Caller

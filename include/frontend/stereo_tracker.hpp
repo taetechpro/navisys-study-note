@@ -26,6 +26,7 @@ public:
 
     int tracked_count() const { return static_cast<int>(prev_pts_l_.size()); }
     const std::vector<cv::Point2f>& tracked_points() const { return prev_pts_l_; }
+    const std::vector<std::size_t>& tracked_ids() const { return prev_track_ids_; }
     const cv::Mat& rectified_left_image() const { return prev_img_l_; }
     const cv::Mat& rectified_right_image() const { return prev_img_r_; }
     double rectified_fx() const { return fx_rect_; }
@@ -58,11 +59,14 @@ private:
     cv::Ptr<cv::ORB> orb_;
     cv::Ptr<cv::BFMatcher> matcher_;
 
-    // ---- tracker state (always aligned) ----
+    // ---- tracker state (always aligned: size N) ----
     cv::Mat prev_img_l_;
     cv::Mat prev_img_r_;
-    std::vector<cv::Point2f> prev_pts_l_;         // [N] left pixel coords
+    std::vector<cv::Point2f> prev_pts_l_;         // [N] left pixel coords (rectified)
     std::vector<Eigen::Vector3d> map_pts_world_;  // [N] 3D in world frame
+    std::vector<std::size_t> prev_track_ids_;     // [N] persistent feature IDs
+
+    std::size_t next_id_ = 0;                     // monotonic ID source
 
     Pose curr_pose_;
     bool initialized_ = false;

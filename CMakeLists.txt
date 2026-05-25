@@ -48,6 +48,8 @@ add_library(vio_core
     src/msckf/feat/FeatureInitializer.cpp
     src/msckf/update/UpdaterHelper.cpp
     src/msckf/update/UpdaterMSCKF.cpp
+    # ---- msckf pipeline adapter (P4) ----
+    src/msckf_pipeline/msckf_pipeline.cpp
 )
 target_link_libraries(vio_core
     PUBLIC
