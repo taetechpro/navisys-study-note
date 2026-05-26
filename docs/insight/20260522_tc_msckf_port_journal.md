@@ -281,6 +281,82 @@ frame 600 시점: LC pos = (181, -108, 15) m, MSCKF pos = (1469, -599, -211) m. 
 
 ---
 
+## P6 debug cycle 3 — Problem statement (2026-05-26)
+
+> **방법론 변경**: cycle 1 의 G1 즉시 적용 (롤백) + cycle 2 의 단편 발췌 (yaw flip + motion contamination) 의 공통 원인은 *문제 정의 없이 코드부터 수정* 했기 때문. cycle 3 부터 **Step1 문제 정의 → Step2 opensource 체계 참고 → Step3 가설별 검증** 의 세 단계를 *별도 commit* 으로 분리. ([[feedback-problem-first-then-opensource]])
+
+### 1. 현상 (P6 종합)
+
+| Init 방식 | 50-frame ATE | Full ATE | 비고 |
+|---|---|---|---|
+| LC EKF (baseline) | — | **152.96 cm** | KITTI 0117 660 frame |
+| MSCKF cycle 1 (`ba=0, bg=mean_gyro`) | 940 cm | 53,279 cm | `v.z` 매 frame 0.05 m/s 누적 |
+| MSCKF cycle 2 시도 1 (gram_schmidt 단독) | 579 cm | — | yaw 180° flip → trajectory frame 오염 |
+| MSCKF cycle 2 시도 2 (hybrid LC-R0 + OV-ba) | 990 cm | **1,599,060 cm** | 30× 악화 |
+
+→ **init bias 추정 자체가 발산을 *증폭*** (cycle 1 ba=0 보다 OV-ba 가 더 나쁨). `ba` 의 추정 *방향* 이 잘못되었거나, *init 단계 자체와 무관한* update path 의 문제.
+
+### 2. 측정값 (cycle 2 attempt 2 진단 print)
+
+```
+mean_accel = (0.91, 0.37, 10.02)   m/s²  ← body frame, 정지 가정
+|mean_accel| = 10.07                 ← gravity 약간 초과
+gravity_mag  = 9.81 (정수 입력)
+R_GtoI       = R0_wi^T (LC R0 그대로)
+R_GtoI * (0,0,gravity_mag) ≈ (0.89, 0.36, 9.76)   ← R_GtoI 의 small tilt 반영
+bg = mean_gyro ≈ (0.000?, 0.000?, 0.001?)
+ba = mean_accel − R_GtoI·g_inG = (0.023, 0.009, +0.257)
+```
+
+**핵심 수치**: `ba.z = +0.257 m/s²` — 정지 init 가정이면 0 근처여야 함. 0.26 m/s² × dt × N = 매 frame 의 *과보정량*.
+
+Propagator 의 `a_world = R_ItoG · (a_local − ba) − g` 에서:
+- 정지 시 a_local ≈ R_GtoI · g + ba_true
+- 만약 ba 추정 = ba_true + ε (KITTI motion contamination 이 ε 만큼 추가) → propagate 시 −ε 의 *bias* 가 velocity 에 누적
+
+### 3. 가설 (검증 가능, 측정값 기반)
+
+| ID | 가설 | 검증 방법 | 성공 신호 |
+|---|---|---|---|
+| **H1** | KITTI 0117 첫 1초 init window 가 *실제로 정지가 아님* — 차량이 천천히 출발 중이라 `mean_accel` 이 `motion_avg` 를 흡수 | 첫 5초 IMU `accel.{x,y,z}` 와 `gyro` 의 *time-series + sliding variance* 측정. var(a.z) over 0.5s window 가 idle 차량 (0.01 m²/s⁴) vs 가속 중 (>0.1) 어느 쪽인지 판별 | var(a.z) > 0.05 이면 H1 적중 — init window 를 *진짜 정지 부분* 으로 좁히거나 ba 추정 skip |
+| **H2** | init 과 무관하게 *update path 자체가 발산* — chi² gate 가 너무 엄격해 거의 모든 measurement 가 drop, 결과적으로 propagate-only EKF 로 동작 | cycle 1 init (`ba=0`) 으로 revert → run_vio 에 `effective_updates / total_features` 카운터 추가 → 50f 출력 | effective_updates / total < 5% 이면 H2 적중 — chi² 임계값 또는 sigma_pix 조정 필요 |
+| **H3** | `NoiseManager` 의 *defaults* (sigma_pix=1.0 px 등) 가 KITTI 의 *outdoor* feature spread 에 부적합 — feature 가중치가 너무 작아 update influence 부족 | H2 결과 본 뒤 결정. sigma_pix sweep {0.5, 1.0, 2.0, 4.0} × 50f run | 50f ATE < 1000 cm 도달하는 sigma 존재 시 H3 적중 |
+
+### 4. 성공 기준 (cycle 3 전체)
+
+- **Primary**: 50-frame ATE < 1000 cm — 1차 가설 적중 신호.
+- **Stretch**: full 660 frame ATE < 53,000 cm (cycle 1 보다 개선).
+- **실패 정의**: 모든 가설 50f ATE > 5000 cm 유지 시 → cycle 4 로 *가설 재구성* (R1 quat 더 깊이 / FEJ 영향 / state covariance init 검토).
+
+### 5. Opensource 참고 mapping (Step 2 - read only)
+
+| 가설 | OpenVINS 참고 지점 | 읽기 commit |
+|---|---|---|
+| H1 정지 판정 | `ov_init/src/static/StaticInitializer.cpp::initialize_viz_state` 의 *disparity check* (image 기반) + *IMU variance threshold* (`a_var_thresh`, `g_var_thresh`) | `read(msckf): study OV StaticInitializer disparity + variance gate` |
+| H2 update path | `ov_msckf/src/update/UpdaterMSCKF.cpp::update` 전체 (chi² gate 위치, null-space proj, msckf 의 *active* feature 조건) | `read(msckf): study OV UpdaterMSCKF update flow + chi2 gate` |
+| H3 noise 기본값 | `ov_msckf/src/state/Propagator.cpp` 의 `NoiseManager` defaults + `ov_msckf/src/core/VioManagerOptions.h` 의 `params.msckf_options.sigma_pix` | `read(msckf): study OV NoiseManager + sigma_pix defaults` |
+
+읽기 commit 은 *코드 0줄 수정*, journal 에 *맥락 요약* 만 추가. cycle 2 의 *단편 발췌* (gram_schmidt 50줄만 가져온) 패턴 방지.
+
+### 6. 검증 commit plan (Step 3)
+
+순서:
+1. `docs(msckf): P6 cycle 3 problem statement` ← *현재 commit*
+2. `read(msckf): study OV StaticInitializer disparity + variance gate`
+3. `read(msckf): study OV UpdaterMSCKF update flow + chi2 gate`
+4. `debug(msckf): P6 cycle 3 H1 — KITTI 0117 IMU variance probe (read-only)`
+5. `debug(msckf): P6 cycle 3 H2 — revert init to ba=0, count effective updates`
+6. (H3 conditional) `debug(msckf): P6 cycle 3 H3 — sigma_pix sweep`
+7. `docs(msckf): P6 cycle 3 results + cycle 4 plan`
+
+각 commit 의 *결과* 는 본 cycle 3 섹션의 하위 블록 (### 7, ### 8, ...) 에 *추가* — *cycle 2 의 시도 1/2 패턴* 과 동일.
+
+### 다음 트리거
+
+**Step 2 시작** — `read(msckf): study OV StaticInitializer ...` commit 부터.
+
+---
+
 ## P3 — Update + Feat 포트 (2026-05-25)
 
 ### 산출물
