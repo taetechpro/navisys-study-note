@@ -76,3 +76,7 @@ if(ENABLE_RERUN)
     target_link_libraries(run_euroc PRIVATE rerun_sdk)
     target_compile_definitions(run_euroc PRIVATE LC_VIO_WITH_RERUN=1)
 endif()
+
+# Debug tool — P6 cycle 3 H1 (KITTI init-window stationarity probe).
+add_executable(probe_kitti_imu tools/probe_kitti_imu_variance.cpp)
+target_link_libraries(probe_kitti_imu PRIVATE vio_core)

@@ -450,9 +450,47 @@ Eigen::Vector3d ba = a_avg_2to1 - quat_2_Rot(q_GtoI) * gravity_inG;
 | **H3** (개선) | `sigma_a = 2.0e-3` 우리 default 가 KAIST IMU 의 *1/3*. → propagator 의 P 가 너무 작아 update gain 작음. KAIST 값 (`5.9e-3`) 으로 키우면 update 가 propagate 를 *압도* 함 | `sigma_a` 만 5.9e-3 으로 키운 build × cycle 1 init 50f run | 50f ATE < 1000 cm 도달 시 H3 적중 |
 | **H4** (신규) | OV `wait_for_jerk` 로직 부재. KITTI 0117 의 *진짜 정지 구간* (있다면 첫 3초 어딘가, 또는 t<0 의 GPS-only 구간) 를 사용해야 함 | H1 결과를 본 뒤 결정. probe 결과 *어디서도* `a_var < 0.5` 가 안 나오면 H4 부정 → "static init 자체가 부적절", *zero-velocity init* 또는 GT 첫 frame 으로 R0 박는 옵션 검토 | a_var 가 어디서도 0.5 미만으로 떨어지지 않음 |
 
+### 9. H1 결과 — *예상과 반대* (2026-05-26)
+
+**도구**: `tools/probe_kitti_imu_variance.cpp` 신규 (~140 줄, 단독 binary). 0.5s sliding window 의 `a_var, w_var` 계산. OV 기준 (`init_imu_thresh = 0.30~1.50`) 와 비교 출력.
+
+**KITTI 0117 첫 5초 측정 (window=0.5s, slide=0.1s)**:
+
+| 구간 | a_var 범위 | 분포 |
+|---|---|---|
+| 0.25–1.55 s | 0.26–0.55 | 대부분 *KAIST gate 0.5 통과* |
+| 1.55–2.25 s | 0.51–0.81 | *burst* (UZH/TUM 실패, default 1.0 통과) — 차량 미세 진동 추정 |
+| 2.25–5.00 s | 0.17–0.55 | 다시 안정, KAIST 통과 |
+
+**Summary**:
+- `first_window_below_KAIST(0.5)` = **0.25 s** (즉, *첫 측정 가능 window 부터* 통과)
+- `rows_below_KAIST_0.5` = **34 / 48 = 70.8%** — 전체적으로 *충분히 stationary*
+- `w_var` 범위: 0.02–0.05 rad/s — 거의 회전 없음, 매우 정적
+
+**H1 부정**: KITTI 0117 의 첫 1초는 OV gate 기준으로 *충분히 정지*. *motion contamination* 가설은 약함. 우리 cycle 2 init window 의 `a_avg.z ≈ 10.02` 가 `g_mag = 9.81` 보다 +0.26 큰 *근본 원인은 motion 이 아니라 magnitude mismatch*:
+- `|mean_accel| = sqrt(0.91² + 0.37² + 10.02²) ≈ 10.07`
+- `gravity_mag = 9.81` (우리 input)
+- 차이 0.26 ≈ ba.z 의 모든 양
+
+→ **재해석**: ba.z = +0.26 은 *motion 흡수* 가 아니라 *|a| > g 의 차이를 ba 가 흡수* 한 것. 가능한 원인:
+1. **gravity_mag 입력값 부정확** — KITTI Karlsruhe 위도 (49.0°N) 의 정확한 g 는 9.811. 거의 차이 없음. **이유 약함**.
+2. **OXTS RT3003 의 accel scale error** — KITTI 의 IMU 가 ~2.6% scale bias. 가능성 중간.
+3. **`kitti_raw_reader` 의 단위 변환 문제** — oxts `af, al, au` field 가 m/s² 가 아니라 다른 단위? 확인 필요.
+4. **R0_wi 가 LC 의 stationary init 결과인데, gravity 와 정확히 align 되지 않음** — LC 코드 검토 필요.
+5. **IMU 의 true ba_true 가 정말 ~0.26 m/s²** — OXTS 사양 (~0.001 m/s²) 보다 크지만 sensor age/drift 가능.
+
+→ **H1 의 *새* 형태**: "init window 선택보다 *|a_avg| ↔ g_mag* 시스템 mismatch 가 ba 추정의 주 오차원". 이 mismatch 가 *진짜 ba_true* 인지 *모델 오류* 인지가 다음 분기.
+
+**다음 분기 결정**:
+- (a) cycle 1 init (`ba=0`) 으로 H2 검증 — chi2_multipler 가 진짜 문제인지 확인. *우선*.
+- (b) `gravity_mag` 와 `|a_avg|` 의 mismatch 가 *진짜* OXTS 의 ba_true 인지 검증 — KITTI 의 다른 정지 sequence (drive_0001 등) 와 비교.
+- (c) `kitti_raw_reader` 의 oxts 단위 검증 — 별 commit 으로 read-only 검사.
+
+(a) 가 가장 즉시 가치 있음 — cycle 1 baseline (53k cm) 의 발산 원인이 *update path 자체* 인지 결론 나면, init 의 ba.z 0.26 이 *작은 문제* 였는지 확인 가능.
+
 ### 다음 트리거
 
-**Step 3 시작** — Task #45 (H1 KITTI 정지성 probe). 도구: `tools/probe_kitti_imu_variance.cpp` 신규 (~50 줄). 출력: 첫 5초의 `t, a_var_0.5s, w_var_0.5s` CSV + 단순 텍스트 plot. 단독 binary, msckf 빌드 영향 ❌.
+**H2 검증** (Task #46) — `cycle 1 init (ba=0)` 으로 revert + `effective_updates/total_features` 카운터 추가 + 50f run. msckf_pipeline.cpp 의 init 부분만 (`ba = Vector3d::Zero()`), 다른 부분 0 변경.
 
 ---
 
