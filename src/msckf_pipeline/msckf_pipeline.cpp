@@ -3,6 +3,7 @@
 #include "msckf/cam/CamRadtan.hpp"
 #include "msckf/feat/Feature.hpp"
 #include "msckf/feat/FeatureInitializerOptions.hpp"
+#include "msckf/init/InitializerHelper.hpp"
 #include "msckf/state/Propagator.hpp"
 #include "msckf/state/State.hpp"
 #include "msckf/state/StateHelper.hpp"
@@ -21,25 +22,17 @@
 
 namespace {
 constexpr std::size_t kCamId = 0;  // single (rectified mono) camera
-
-// Hamilton R_wi (world<-imu) -> JPL q_IG (imu<-global, since OpenVINS uses
-// I_R_G internally and exposes Rot() == R_IG).
-Eigen::Matrix<double, 4, 1> hamilton_R_wi_to_jpl_q_IG(const Eigen::Matrix3d& R_wi) {
-    return ov_core::rot_2_quat(R_wi.transpose());  // R_IG = R_wi^T
-}
 }  // namespace
 
 MsckfPipeline::MsckfPipeline(double t0,
                              const Eigen::Matrix3d& R0_wi,
-                             const Eigen::Vector3d& p0,
-                             const Eigen::Vector3d& v0,
-                             const Eigen::Vector3d& bg0,
-                             const Eigen::Vector3d& ba0,
+                             const Eigen::Vector3d& mean_accel,
+                             const Eigen::Vector3d& mean_gyro,
+                             double gravity_mag,
                              const Eigen::Matrix4d& T_cam0_imu,
                              double fx_rect, double fy_rect,
                              double cx_rect, double cy_rect,
-                             int img_width, int img_height,
-                             double gravity_mag)
+                             int img_width, int img_height)
     : fx_(fx_rect), fy_(fy_rect), cx_(cx_rect), cy_(cy_rect),
       img_w_(img_width), img_h_(img_height) {
 
@@ -61,29 +54,44 @@ MsckfPipeline::MsckfPipeline(double t0,
     state_ = std::make_shared<ov_msckf::State>(opts);
     state_->_timestamp = t0;
 
-    // ---- IMU initial value: 16-dim [q(4), p(3), v(3), bg(3), ba(3)] ----
+    // ---- Hybrid stationary init ----
+    // R_GtoI: take from LC stationary init (preserves yaw alignment with GT
+    //         world frame). gram_schmidt alone picked an arbitrary yaw and
+    //         produced a 180-deg flipped frame on KITTI 0117, ballooning ATE.
+    // bg, ba: compute OpenVINS-style so Propagator's residual at rest is 0.
+    //         ba = mean_accel - R_GtoI * (0,0,gravity_mag) (line 131 of
+    //         ov_init/StaticInitializer.cpp).
+    const Eigen::Matrix3d R_GtoI = R0_wi.transpose();  // world->body
+    const Eigen::Vector4d q_GtoI = ov_core::rot_2_quat(R_GtoI);
+
+    Eigen::Vector3d gravity_inG;
+    gravity_inG << 0.0, 0.0, gravity_mag;
+    const Eigen::Vector3d bg = mean_gyro;
+    const Eigen::Vector3d ba = mean_accel - R_GtoI * gravity_inG;
+
+    // ---- IMU 16-dim [q(4), p(3), v(3), bg(3), ba(3)] ----
     Eigen::Matrix<double, 16, 1> imu0;
-    imu0.block<4, 1>(0, 0)  = hamilton_R_wi_to_jpl_q_IG(R0_wi);
-    imu0.block<3, 1>(4, 0)  = p0;
-    imu0.block<3, 1>(7, 0)  = v0;
-    imu0.block<3, 1>(10, 0) = bg0;
-    imu0.block<3, 1>(13, 0) = ba0;
+    imu0.block<4, 1>(0, 0)  = q_GtoI;
+    imu0.block<3, 1>(4, 0)  = Eigen::Vector3d::Zero();
+    imu0.block<3, 1>(7, 0)  = Eigen::Vector3d::Zero();
+    imu0.block<3, 1>(10, 0) = bg;
+    imu0.block<3, 1>(13, 0) = ba;
     state_->_imu->set_value(imu0);
     state_->_imu->set_fej(imu0);
 
-    // ---- R1 diagnostic: state R should equal input R_wi^T (= R_IG) ----
+    // ---- diagnostic prints ----
+    std::cerr << "[msckf:init] mean_accel=" << mean_accel.transpose()
+              << "  |a|=" << mean_accel.norm()
+              << "  gravity_mag=" << gravity_mag << "\n";
+    std::cerr << "[msckf:init] mean_gyro=" << mean_gyro.transpose() << "\n";
+    std::cerr << "[msckf:init] R_GtoI (Global z is body-up direction) =\n" << R_GtoI << "\n";
+    std::cerr << "[msckf:init] bg=" << bg.transpose() << "  ba=" << ba.transpose() << "\n";
+    // Sanity: predicted body accel at rest = R_GtoI * gravity_inG + ba should == mean_accel
     {
-        const Eigen::Matrix3d R_state_IG = state_->_imu->Rot();
-        const Eigen::Matrix3d R_expected_IG = R0_wi.transpose();
-        const double err = (R_state_IG - R_expected_IG).norm();
-        std::cerr << "[msckf:R1] |R_state_IG - R_wi^T| = " << err
-                  << "  (close to 0 means quat round-trip OK)\n";
-        std::cerr << "[msckf:R1] R_wi (world<-body) input =\n" << R0_wi << "\n";
-        std::cerr << "[msckf:R1] R_state_IG (body<-world) =\n" << R_state_IG << "\n";
-        std::cerr << "[msckf:R1] p0=" << p0.transpose()
-                  << "  v0=" << v0.transpose()
-                  << "  bg0=" << bg0.transpose()
-                  << "  ba0=" << ba0.transpose() << "\n";
+        const Eigen::Vector3d predicted = R_GtoI * gravity_inG + ba;
+        const double rest_err = (predicted - mean_accel).norm();
+        std::cerr << "[msckf:init] |R_GtoI*g + ba - mean_accel| = " << rest_err
+                  << " (== 0 by construction)\n";
     }
 
     // ---- Camera extrinsic: T_cam0_imu (Hamilton) -> q_CtoI in JPL convention ----

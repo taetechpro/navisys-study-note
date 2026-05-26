@@ -865,14 +865,38 @@ int main(int argc, char** argv) {
         std::unique_ptr<MsckfPipeline> msckf;
         const bool use_msckf = (cli.engine == "msckf");
         if (use_msckf) {
+            // Recompute mean accel/gyro over the same stationary window the LC
+            // init used (post-t0, see initialize_from_imu lines 318-324).
+            // MsckfPipeline rebuilds R_GtoI internally via OpenVINS' gram_schmidt,
+            // so we feed it the raw means rather than LC's R0.
+            Eigen::Vector3d mean_accel = Eigen::Vector3d::Zero();
+            Eigen::Vector3d mean_gyro  = Eigen::Vector3d::Zero();
+            int n_init = 0;
+            const double win = init_params.static_window_sec;
+            for (const auto& imu : imu_data) {
+                if (imu.timestamp < t0) continue;
+                if (imu.timestamp > t0 + win) break;
+                mean_accel += imu.accel;
+                mean_gyro  += imu.gyro;
+                ++n_init;
+            }
+            if (n_init == 0) {
+                throw std::runtime_error("MSCKF init: no IMU samples in stationary window");
+            }
+            mean_accel /= double(n_init);
+            mean_gyro  /= double(n_init);
+            std::cout << "[engine] MSCKF init from " << n_init
+                      << " IMU samples, |a|=" << mean_accel.norm() << "\n";
+
             msckf = std::make_unique<MsckfPipeline>(
                 init.t0,
-                init.R0, init.p0, init.v0, init.bg0, init.ba0,
+                init.R0,                                       // yaw-aligned with GT world
+                mean_accel, mean_gyro,                          // OpenVINS-style bg/ba
+                std::abs(init.g_world.z()),
                 cam0.T_cam_imu,
                 tracker.rectified_fx(), tracker.rectified_fy(),
                 tracker.rectified_cx(), tracker.rectified_cy(),
-                cam0.width, cam0.height,
-                std::abs(init.g_world.z()));
+                cam0.width, cam0.height);
             std::cout << "[engine] MSCKF (TC, ported OpenVINS)\n";
         } else {
             std::cout << "[engine] LC EKF (baseline)\n";

@@ -49,20 +49,23 @@ public:
         float v;
     };
 
+    // Hybrid init: keep LC's R0_wi (so yaw is aligned with the GT world
+    // frame the trajectory will be compared against) but derive accel bias
+    // OpenVINS-style (ba = mean_accel - R_GtoI * gravity_inG) so the
+    // Propagator's stationary cancellation is exact. gram_schmidt alone
+    // (cycle 2 first attempt) picked a 180-deg yaw and blew up the ATE.
     MsckfPipeline(double t0,
                   const Eigen::Matrix3d& R0_wi,
-                  const Eigen::Vector3d& p0,
-                  const Eigen::Vector3d& v0,
-                  const Eigen::Vector3d& bg0,
-                  const Eigen::Vector3d& ba0,
+                  const Eigen::Vector3d& mean_accel,
+                  const Eigen::Vector3d& mean_gyro,
+                  double gravity_mag,
                   const Eigen::Matrix4d& T_cam0_imu,
                   double fx_rect,
                   double fy_rect,
                   double cx_rect,
                   double cy_rect,
                   int img_width,
-                  int img_height,
-                  double gravity_mag = 9.81);
+                  int img_height);
 
     ~MsckfPipeline();
 
