@@ -101,4 +101,6 @@ private:
     double          last_imu_t_ = -1.0;
     Eigen::Vector3d last_imu_w_ = Eigen::Vector3d::Zero();
     Eigen::Vector3d last_imu_a_ = Eigen::Vector3d::Zero();
+
+    int diag_frame_count_ = 0;
 };

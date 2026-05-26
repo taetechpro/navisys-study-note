@@ -71,6 +71,21 @@ MsckfPipeline::MsckfPipeline(double t0,
     state_->_imu->set_value(imu0);
     state_->_imu->set_fej(imu0);
 
+    // ---- R1 diagnostic: state R should equal input R_wi^T (= R_IG) ----
+    {
+        const Eigen::Matrix3d R_state_IG = state_->_imu->Rot();
+        const Eigen::Matrix3d R_expected_IG = R0_wi.transpose();
+        const double err = (R_state_IG - R_expected_IG).norm();
+        std::cerr << "[msckf:R1] |R_state_IG - R_wi^T| = " << err
+                  << "  (close to 0 means quat round-trip OK)\n";
+        std::cerr << "[msckf:R1] R_wi (world<-body) input =\n" << R0_wi << "\n";
+        std::cerr << "[msckf:R1] R_state_IG (body<-world) =\n" << R_state_IG << "\n";
+        std::cerr << "[msckf:R1] p0=" << p0.transpose()
+                  << "  v0=" << v0.transpose()
+                  << "  bg0=" << bg0.transpose()
+                  << "  ba0=" << ba0.transpose() << "\n";
+    }
+
     // ---- Camera extrinsic: T_cam0_imu (Hamilton) -> q_CtoI in JPL convention ----
     // OpenVINS PoseJPL stores q_CtoI, p_IinC. T_cam0_imu : cam0 <- imu, so:
     //   R_CI = T_cam0_imu.block<3,3>(0,0)  (cam <- imu)
@@ -200,6 +215,20 @@ void MsckfPipeline::feed_camera(double t,
     // ---- Step 5: marginalize old clone if sliding window is full ----
     while (static_cast<int>(state_->_clones_IMU.size()) > state_->_options.max_clone_size) {
         ov_msckf::StateHelper::marginalize_old_clone(state_);
+    }
+
+    // ---- R1 diagnostic: first 5 frames, log state ----
+    if (diag_frame_count_ < 5) {
+        const Eigen::Matrix3d R_wi = state_->_imu->Rot().transpose();
+        const Eigen::Vector3d p    = state_->_imu->pos();
+        const Eigen::Vector3d v    = state_->_imu->vel();
+        std::cerr << "[msckf:R1] f" << diag_frame_count_ << " t=" << t
+                  << "  p=" << p.transpose()
+                  << "  v=" << v.transpose()
+                  << "  Rwi_diag=" << R_wi(0,0) << "," << R_wi(1,1) << "," << R_wi(2,2)
+                  << "  updates=" << msckf_updates_
+                  << "\n";
+        ++diag_frame_count_;
     }
 }
 

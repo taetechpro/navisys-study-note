@@ -206,6 +206,46 @@ frame 600 시점: LC pos = (181, -108, 15) m, MSCKF pos = (1469, -599, -211) m. 
 
 ---
 
+## P6 debug cycle 1 — R1 quat OK, frame convention 의심 (2026-05-26)
+
+**가설 1 (rejected): gravity_mag 부호 반전**
+- 의심: OpenVINS Propagator `_gravity << 0,0,gravity_mag` (line 57) 가 (0,0,+9.81) z-down, LC 는 (0,0,-9.81) z-up. 부호 반대.
+- 시도: `init.g_world.z()` (= -9.81) 그대로 어댑터에 전달.
+- 결과: **악화**. 660-frame ATE 53279 cm → 1,332,060 cm (13320m). frame 600 z = +36766 m (z-up 폭주, 부호 양쪽 다 발산).
+- 결론: gravity_mag = +9.81 이 *옳음*. _gravity = (0,0,+9.81) 자체는 OpenVINS convention 에서 정상.
+
+**가설 2 (R1 quat 변환 자체): 검증 결과 OK**
+- 진단 코드: 어댑터 생성자에 `|R_state_IG - R_wi^T|` print + 첫 5 frame state 출력.
+- 결과:
+  ```
+  |R_state_IG - R_wi^T| = 1.13e-16    ← quat round-trip 완벽
+  f0  p=(0,0,0)        v=(0,0,0)             updates=0
+  f1  p=(2e-4,4e-3,1e-4)  v=(0.005, 0.067, 0.005)   updates=0
+  f2  p=(1e-3, 1e-2, 1e-3) v=(0.008, 0.108, 0.034)  updates=1
+  f3  p=...               v=(0.010, 0.121, 0.090)   updates=2
+  f4  p=...               v=(0.011, 0.143, 0.148)   updates=3
+  ```
+- 핵심 패턴: **v.z 가 매 frame 기하급수적 증가** — 0 → 0.005 → 0.034 → 0.090 → 0.148. gravity 보정 잔차가 *누적 적분*.
+- 결론: R1 변환 OK. quat 자체 부호 오류 아님.
+
+**가설 3 (frame convention mismatch, 다음 사이클 의심)**
+- 정지 시 body accel = (0.91, 0.37, +10.02). z = +10 이라는 건 *body z 가 gravity 의 반대* = body z up.
+- OpenVINS Propagator 의 `R_Gtoi.T * a_local - _gravity * dt` 가 정상 작동하려면 *Global frame z = body z* 가 *gravity 와 같은 방향* (down) 이어야 cancel.
+- 우리 R0_wi (LC world z up) 를 R_IG 로 박았는데, OpenVINS 는 Global z down 가정 → 정지 시 a.z 가 *cancel 안 됨*, residual 약 +0.2 m/s² 가 *매 frame 누적*.
+- 가능한 fix:
+  - (3a) body↔world 변환 행렬 R_z = diag(1,1,-1) 을 R0_wi 에 곱해서 *OpenVINS convention* 으로 변환.
+  - (3b) 어댑터 안에서 *Propagator 의 _gravity 를 (0,0,-9.81) 로 set* — protected 접근 → friend 또는 가상 ctor.
+  - (3c) `gravity_mag` 만 받지 말고 vector 형태 ctor 추가 (OpenVINS source 패치).
+
+### 다음 트리거
+
+**`P6 debug cycle 2`** — 가설 3 검증 + fix:
+1. 가설 3a 가 가장 비침습. R0_wi 에 z-flip 행렬 곱한 후 정지 init 시 *어떤 R0* 가 나오는지 검증.
+2. 그래도 발산하면 (3b) friend 접근 추가.
+3. 첫 5 frame v.z 가 *0 근처* 로 수렴하는지 확인 — 그게 *frame convention fix 의 성공 지표*.
+
+---
+
 ## P3 — Update + Feat 포트 (2026-05-25)
 
 ### 산출물

@@ -208,17 +208,25 @@ KITTI 0117 첫 결과:
 
 ---
 
-## 다음 액션 (P6 정확도 디버깅)
+## 다음 액션 (P6 정확도 디버깅 — cycle 2)
+
+### Cycle 1 결과 (2026-05-26)
+
+| 가설 | 결과 | 비고 |
+|---|---|---|
+| **G1: gravity_mag 부호 반전** | ❌ 악화 (ATE 53279 → 1,332,060 cm) | gravity_mag = +9.81 자체는 옳음 |
+| **G2: R1 quat round-trip 오류** | ✅ R1 OK (`\|R_state - R_wi^T\| = 1.13e-16`) | quat 변환 정확 |
+| **G3: frame convention mismatch** | 🚧 의심 — 정지 시 v.z 가 매 frame 누적 (0→0.005→0.034→0.090→0.148) | LC world z-up vs OpenVINS Global z-down |
+
+자세한 흐름: [[../insight/20260522_tc_msckf_port_journal#P6 debug cycle 1]]
 
 ### 트리거 단어
-**`P6 디버그 시작`** ← 사용자 발화하면 즉시 진행.
+**`P6 debug cycle 2`** — 가설 G3 검증 + fix.
 
-### P6 디버깅 범위 (가장 가능성 큰 순)
-1. **R1 quat 변환 검증** — 첫 frame state_->_imu->Rot() vs R0_wi^T print 비교. 부호/transpose 오류 시 propagate 의 gravity 가 *반대 방향* 더해져 지수 발산.
-2. **chi² gate 효율** — `msckf_updates_` 횟수 vs 시도 횟수. effective update 가 0 이면 IMU only propagate → 발산.
-3. **첫 10 frame plot** — MSCKF pos vs LC pos vs GT. *발산 시작 시점* 확인.
-4. **FEJ 영향** — `do_fej=false` 로 재실행. KITTI 의 큰 initial uncertainty 에 FEJ 가 안 맞을 가능성.
-5. **NoiseManager 튜닝** — 검사 결과 KITTI yaml 과 동일하지만 *KITTI 가 더 noisy* 가능 → sigma_a/w 증가 시도.
+### Cycle 2 시도 순서
+1. **G3a (비침습)**: R0_wi 에 z-flip 행렬 (R_z = diag(1,1,-1)) 곱한 후 set_value. 첫 5 frame v.z 가 *0 근처* 로 수렴 시 성공 지표.
+2. **G3b**: 어댑터 friend 로 Propagator::_gravity 직접 set (0,0,-9.81).
+3. **G3c**: OpenVINS Propagator 에 vector 형태 ctor 추가 (source 패치).
 
 ### 다음 액션 (백업)
 
