@@ -351,9 +351,108 @@ Propagator 의 `a_world = R_ItoG · (a_local − ba) − g` 에서:
 
 각 commit 의 *결과* 는 본 cycle 3 섹션의 하위 블록 (### 7, ### 8, ...) 에 *추가* — *cycle 2 의 시도 1/2 패턴* 과 동일.
 
+### 7. Opensource 체계 참고 (Step 2 결과)
+
+> 단편 발췌 (cycle 2 의 gram_schmidt 50줄 패턴) 가 아닌 *전체 컨텍스트* 읽기. 소스: `D:/05_agent/MAIN/OpenVINS/impl_base_Openvins_official/`.
+
+#### 7.1 OV StaticInitializer (`ov_init/src/static/StaticInitializer.cpp`)
+
+**핵심 알고리즘 — 두 sliding window 비교**:
+
+```
+[t_oldest .. t_newesttime - 0.5·win]  →  window_2to1  (이른 절반)
+[t_newesttime - 0.5·win .. t_newesttime]  →  window_1to0  (최근 절반)
+```
+
+각 window 에서 `a_var = std::sqrt( Σ |a − a_avg|² / (N-1) )` (sample std).
+
+판정 (line 100–119):
+
+| 모드 | 조건 (성공) | 사용 데이터 |
+|---|---|---|
+| `wait_for_jerk = true` (기본) | `a_var_2to1 < thresh` AND `a_var_1to0 > thresh` | **window_2to1** (이른 정지 구간) |
+| `wait_for_jerk = false` | `a_var_2to1 < thresh` AND `a_var_1to0 < thresh` | window_2to1 |
+
+→ **핵심 통찰**: ba 계산에 *항상 `a_avg_2to1`* 사용. `wait_for_jerk=true` 는 *jerk 이전의 정지 구간* 을 찾는 메커니즘. KITTI 0117 처럼 *시작부터 움직이는* 데이터에는 *jerk 가 발생하지 않거나 init 실패* 함이 *의도된 동작*.
+
+**ba/bg 산출 (line 121–131)**:
+```cpp
+Eigen::Vector3d z_axis = a_avg_2to1 / a_avg_2to1.norm();
+InitializerHelper::gram_schmidt(z_axis, Ro);
+Eigen::Vector4d q_GtoI = rot_2_quat(Ro);
+Eigen::Vector3d gravity_inG(0, 0, params.gravity_mag);
+Eigen::Vector3d bg = w_avg_2to1;
+Eigen::Vector3d ba = a_avg_2to1 - quat_2_Rot(q_GtoI) * gravity_inG;
+```
+
+→ cycle 2 에서 우리가 이 식을 베꼈으나 *window_2to1 의 gate* 가 없었다. 그게 motion contamination 의 직접 원인.
+
+**파라미터 기본값** (`ov_init/src/init/InertialInitializerOptions.h`):
+- `init_window_time = 1.0` s
+- `init_imu_thresh = 1.0` m/s² (default)
+
+**실제 yaml 값** (각 dataset 의 `config/*/estimator_config.yaml`):
+
+| dataset | `init_window_time` | `init_imu_thresh` | 비고 |
+|---|---|---|---|
+| EuRoC MAV | 2.0 | 1.5 | 실내 drone |
+| KAIST (driving) | 2.0 | **0.5** | **outdoor 차량 — KITTI 와 가장 유사** |
+| KAIST_VIO | 2.0 | 0.6 | 같은 데이터셋 VIO 변형 |
+| TUM VI | 1.5 | 0.45 | 실내 |
+| UZH FPV | 2.0 | 0.30 | 실외 drone |
+| RealSense T265 | 2.0 | 1.5 | handheld |
+
+→ **KITTI 후보값**: `init_window_time = 2.0`, `init_imu_thresh = 0.5` (KAIST 와 동일).
+
+#### 7.2 OV UpdaterMSCKF (`ov_msckf/src/update/UpdaterMSCKF.cpp::update`)
+
+**6 단계 흐름**:
+
+1. **Clean** — feature 별 measurement 중 clone time 에 없는 것 제거. measurement < 2 면 feature drop.
+2. **Build clone poses** — IMU clone × `_calib_IMUtoCAM` → 각 cam 의 G→Ci pose.
+3. **Triangulate** — `FeatureInitializer::single_triangulation` + `single_gaussnewton`. 실패 시 feature drop.
+4. **Per-feature Jacobian + nullspace + chi² gate**:
+   ```cpp
+   UpdaterHelper::get_feature_jacobian_full(state, feat, H_f, H_x, res, Hx_order);
+   UpdaterHelper::nullspace_project_inplace(H_f, H_x, res);
+   S = H_x * P_marg * H_x.T + sigma_pix_sq * I;
+   chi2 = res.dot(S.llt().solve(res));
+   if (chi2 > chi2_multipler * chi2_table[res.rows()]) DROP;
+   ```
+5. **Measurement compression QR** — `Hx_big`, `res_big` 압축.
+6. **EKF update** — `R = sigma_pix_sq * I`, `StateHelper::EKFUpdate`.
+
+→ chi² gate 위치: *step 4*. drop 의 *통계* 가 H2 계측 대상.
+
+#### 7.3 NoiseManager + UpdaterOptions 기본값 비교
+
+| 파라미터 | OV 헤더 default | OV yaml (KAIST 차량) | **우리 코드 (`msckf_pipeline.cpp:128-131`)** | 차이 |
+|---|---|---|---|---|
+| `sigma_pix` (px) | 1.0 | 1.5 | **1.0** | 0.5 px 작음 (KAIST 대비) |
+| `chi2_multipler` | 5.0 | **1.0** | **5.0** | **5× 더 permissive** (header default 그대로) |
+| `sigma_w` (gyro nd, rad/s/√Hz) | 1.7e-4 | 1.7e-4 | 1.7e-4 (NoiseManager default) | 일치 |
+| `sigma_a` (accel nd, m/s²/√Hz) | 2.0e-3 | **5.9e-3** | 2.0e-3 (NoiseManager default) | **3× underestimate** (KITTI/KAIST 대비) |
+| `sigma_wb` (rad/s²/√Hz) | 1.9e-5 | 1.0e-5 | 1.9e-5 | 2× 큼 |
+| `sigma_ab` (m/s³/√Hz) | 3.0e-3 | 1.0e-4 | 3.0e-3 | 30× 큼 |
+
+→ **두 가지 노이즈 정합 이슈 발견**:
+1. `sigma_a` 우리 default 가 KAIST 차량 IMU 대비 *3× underestimate*. → propagator 가 IMU 를 *과신* → state covariance 가 너무 작아 update 가 *덜 보정*.
+2. `chi2_multipler = 5` 는 OV header default 이지만 *yaml 은 모두 1 로 override*. → 우리는 *5× 더 permissive* — outlier 가 update 에 통과될 가능성.
+
+### 8. 가설 재구성 (Step 2 후)
+
+> 측정값 + opensource read 이후 H1/H2/H3 를 *더 구체적으로* 재정의.
+
+| ID | 가설 | 검증 (Step 3) | 성공 신호 |
+|---|---|---|---|
+| **H1** (개선) | KITTI 0117 첫 1s `a_var_1to0` > `init_imu_thresh=0.5` (KAIST 기준). → init window 가 *정지가 아님* | `tools/probe_kitti_imu_variance.cpp` 만들어 sliding 0.5s window 의 `a_var` 를 첫 5초 plot. OV gate 통과 구간 마킹. | 첫 1s `a_var > 0.5` 이면 H1 적중. *언제 a_var < 0.5* 인지 (혹은 안 떨어지는지) 도 확인. |
+| **H2** (개선) | `chi2_multipler=5.0` (현재) → outlier 가 update 에 진입 + EKF 발산 가속. OV driving yaml 의 1.0 으로 좁히면 stability 개선 | `chi2_multipler={5.0, 2.0, 1.0}` × cycle 1 init (`ba=0`) 50f run. 동시에 `accepted/dropped feature` 카운터 추가 | sigma 변경으로 50f ATE < 1000 cm 또는 *accepted 비율* < 50% 로 떨어지면 H2 적중 |
+| **H3** (개선) | `sigma_a = 2.0e-3` 우리 default 가 KAIST IMU 의 *1/3*. → propagator 의 P 가 너무 작아 update gain 작음. KAIST 값 (`5.9e-3`) 으로 키우면 update 가 propagate 를 *압도* 함 | `sigma_a` 만 5.9e-3 으로 키운 build × cycle 1 init 50f run | 50f ATE < 1000 cm 도달 시 H3 적중 |
+| **H4** (신규) | OV `wait_for_jerk` 로직 부재. KITTI 0117 의 *진짜 정지 구간* (있다면 첫 3초 어딘가, 또는 t<0 의 GPS-only 구간) 를 사용해야 함 | H1 결과를 본 뒤 결정. probe 결과 *어디서도* `a_var < 0.5` 가 안 나오면 H4 부정 → "static init 자체가 부적절", *zero-velocity init* 또는 GT 첫 frame 으로 R0 박는 옵션 검토 | a_var 가 어디서도 0.5 미만으로 떨어지지 않음 |
+
 ### 다음 트리거
 
-**Step 2 시작** — `read(msckf): study OV StaticInitializer ...` commit 부터.
+**Step 3 시작** — Task #45 (H1 KITTI 정지성 probe). 도구: `tools/probe_kitti_imu_variance.cpp` 신규 (~50 줄). 출력: 첫 5초의 `t, a_var_0.5s, w_var_0.5s` CSV + 단순 텍스트 plot. 단독 binary, msckf 빌드 영향 ❌.
 
 ---
 
