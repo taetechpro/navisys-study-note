@@ -2,14 +2,49 @@
 
 연구 마일스톤 기록. 각 버전은 git tag 와 1:1 대응. 형식은 semver 와 유사하나 *연구 단계* 기준 (검증된 baseline → 검증된 신규 contribution).
 
-## [Unreleased] — P3 진행 예정
+## [Unreleased] — P6 cycle 2 (accuracy debug, in progress)
 
-- TC MSCKF Stage P3: `update/{UpdaterMSCKF, UpdaterHelper, UpdaterOptions}` + `feat/{Feature, FeatureInitializer, FeatureInitializerOptions, FeatureHelper}` 포트
-- Stage P4: msckf_pipeline 어댑터 (LC EKF 의 Hamilton ↔ JPL quaternion 변환)
-- Stage P5: KITTI 0117 첫 빌드·실행·디버그
-- Stage P6: LC 대비 ATE 비교
+- Port `ov_init::InitializerHelper::gram_schmidt` so the adapter can build
+  R_GtoI exactly as OpenVINS expects (Global z aligned with body's
+  gravity-opposite axis).
+- Replace adapter's R0_wi-from-LC path with mean_accel-driven gram_schmidt
+  init. Validate stationary v.z stays near zero.
+- Re-measure KITTI 0117 ATE; target LC parity (~153 cm) or better.
 
 진행 추적: [`docs/Practice/tc_msckf_port_progress.md`](docs/Practice/tc_msckf_port_progress.md)
+
+## [v0.3.0-msckf-runs] — 2026-05-26
+
+### Added (P3 → P5)
+- OpenVINS 포트 **P3**: `include/msckf/update/{UpdaterMSCKF, UpdaterHelper, UpdaterOptions}`,
+  `include/msckf/feat/{Feature, FeatureInitializer, FeatureInitializerOptions}` (10 파일).
+  FeatureHelper / FeatureDatabase 의도적 제외 (UpdaterMSCKF 직접 의존 없음).
+- OpenVINS 포트 **P4**: `include/msckf_pipeline/msckf_pipeline.hpp` + cpp
+  (Hamilton ↔ JPL quat 변환, monocular MSCKF, feature DB direct mgmt,
+  CamRadtan with rectified intrinsics + zero distortion).
+- `include/frontend/stereo_tracker.hpp/cpp`: `prev_track_ids_` + `next_id_`
+  추가. KLT / PnP / ORB 모든 분기에서 track ID 동기. LC 영향 없음.
+- `apps/run_vio.cpp`: `--engine=lc|msckf` CLI 옵션, parallel engine wiring.
+
+### Changed
+- `CMakeLists.txt` — Boost::date_time 추가, msckf_pipeline.cpp + P3 cpp 4개 등록.
+- `libvio_core.a` 1.99 MB → **3.0 MB**.
+
+### Build & runtime status
+- Build clean (warnings 0, errors 0).
+- KITTI 0117 660-frame **crash-free** on `--engine=msckf` after 3 boundary fixes:
+  first-frame dt=0 bypass (StateHelper::augment_clone), upfront IMU feed
+  for OpenVINS Propagator, pre-t0 IMU also buffered for boundary interp.
+- LC EKF baseline preserved: ATE **152.96 cm** (메모리의 ~153 cm 와 정확히 일치).
+
+### Known issues (recorded, deferred to next milestone)
+- MSCKF ATE 53,279 cm (diverges). Root cause analysis ongoing:
+  - G1 (gravity sign): rejected — flipping made it worse (1.33M cm).
+  - G2 (R1 quat round-trip): verified — |R_state - R_wi^T| = 1.13e-16.
+  - G3 (frame convention): suspected. Stationary v.z accumulates 0 → 0.148 m/s
+    over 5 frames; pattern matches uncancelled residual gravity.
+- See [`docs/insight/20260522_tc_msckf_port_journal.md`](docs/insight/20260522_tc_msckf_port_journal.md)
+  §"P6 debug cycle 1" for the full evidence trail.
 
 ## [v0.2.0-msckf-port-p2] — 2026-05-22
 
