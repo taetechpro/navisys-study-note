@@ -246,6 +246,41 @@ frame 600 시점: LC pos = (181, -108, 15) m, MSCKF pos = (1469, -599, -211) m. 
 
 ---
 
+## P6 debug cycle 2 — ov_init port + frame convention 진실 (2026-05-26)
+
+### 시도 1 — gram_schmidt 단독 (rejected, but enlightening)
+- 포트: `include/msckf/init/InitializerHelper.hpp` (ov_init/utils/helper.h 의 gram_schmidt 50줄 발췌).
+- 어댑터 ctor 를 *mean_accel + mean_gyro* 입력으로 변경, R_GtoI = gram_schmidt(mean_accel), bg=mean_gyro, ba = mean_accel - R*g_inG (OV 식 line 131).
+- *진실 발견*: OpenVINS Global z **= up** (cycle 1 의 z=down 추측 *반대*). gram_schmidt 의 `R_GtoI.col3 = z_axis = a_avg/|a|` 는 *body up direction (Global z의 body 표현)* — *Global z 와 body up 평행*.
+- 결과: 50f ATE 579 cm (cycle 1 의 940 cm 보다 *개선*). 그러나 `Rwi_diag = (-0.996, -0.999, +0.995)` — **180-deg yaw flip**. gram_schmidt 가 *e_2 cross z* 로 임의 yaw 선택 → KITTI car forward (+x) 와 반대.
+- 의미: *propagate 자체는 internal frame 으로 일관* (yaw 는 unobservable). 그러나 *trajectory vs GT* 비교 시 frame 불일치 → ATE 측정 오염.
+
+### 시도 2 — Hybrid (LC R0 + OV ba) — also rejected
+- 가설: gram_schmidt 의 *yaw 만 LC 와 align* 하면 ATE 개선될 것. R_GtoI = R0_wi.transpose() (LC R0 유지, gram_schmidt 사용 안 함), bg/ba 만 OV 식.
+- 결과: yaw align 회복 (`Rwi_diag = (+0.996, +0.999, +0.995)`), v.z 발산 감소 (0.148 → 0.044 m/s @ f4). 그러나 **ATE *악화*: 50f 990 cm, full 1,599,060 cm (1599 m)**. cycle 1 의 53,279 cm 보다 30x 더 크게 발산.
+- 진단: ba = mean_accel - R*g_inG = (0.023, 0.009, **0.257**). z 성분이 *0.26 m/s²* — propagate 가 매 frame 그만큼 *과보정*. KITTI 0117 의 *첫 1초 init window* 가 진짜 정지 아닌 *천천히 움직임* — mean_accel 에 *motion_avg* 가 *gravity 와 함께* 섞여 ba 가 *오염*.
+
+### 핵심 발견 (cycle 2)
+- **OpenVINS Global z = up** (gram_schmidt source 확인). cycle 1 의 가정 반대.
+- **gram_schmidt 는 z 만 정확, x/y 는 임의 yaw** — Global frame 정의가 *VIO 의 4-DOF unobservable* 의 yaw 부분 까지 *자유* 라는 OpenVINS 의 의도된 동작.
+- **R0_wi (LC 정지 init 결과) 가 *yaw 와 frame align*** — LC 가 *world = first IMU pose* 가정으로 만들었기 때문. GT 와 같은 yaw.
+- **OV 식 ba = mean_accel - R*g_inG 는 init window 가 *진짜 정지* 일 때만 정확**. KITTI 0117 처럼 *시작 시 천천히 출발* 데이터 에서는 *motion contamination* 으로 *ba 가 motion 흡수* → 잘못된 IMU bias.
+
+### 회수 결정
+- 어댑터 ctor 는 *hybrid (R0+mean_accel+mean_gyro)* 시그니처 유지 — *향후 init 옵션 비교 용*.
+- 다음 cycle 진입 전 일단 *cycle 1 의 init* (`ba=0`) 로 *baseline 복원* 하는 commit 도 고려.
+
+### 다음 트리거
+
+**`P6 debug cycle 3`** — init data 의 *진짜 정지 구간* 확인 + update 효율 분석:
+1. KITTI 0117 의 IMU 측정 첫 *5초* 의 *variance* plot — 어디까지 정지인지 시각화.
+2. init window 를 *true stationary* 구간으로 확대 시도.
+3. *그래도 안 되면*: msckf_updates_ effective 횟수 측정. chi² gate 가 dropping 율 정량화.
+4. NoiseManager 의 sigma_pix 조정 (현재 1.0, KITTI 의 ORB feature 에 비해 작을 수 있음 — feature update weight 작음).
+5. *fallback*: cycle 1 baseline (53k cm) 으로 revert 후 update 단독 디버깅.
+
+---
+
 ## P3 — Update + Feat 포트 (2026-05-25)
 
 ### 산출물

@@ -214,19 +214,38 @@ KITTI 0117 첫 결과:
 
 | 가설 | 결과 | 비고 |
 |---|---|---|
-| **G1: gravity_mag 부호 반전** | ❌ 악화 (ATE 53279 → 1,332,060 cm) | gravity_mag = +9.81 자체는 옳음 |
+| **G1: gravity_mag 부호 반전** | ❌ 악화 (ATE 53,279 → 1,332,060 cm) | gravity_mag = +9.81 자체는 옳음 |
 | **G2: R1 quat round-trip 오류** | ✅ R1 OK (`\|R_state - R_wi^T\| = 1.13e-16`) | quat 변환 정확 |
-| **G3: frame convention mismatch** | 🚧 의심 — 정지 시 v.z 가 매 frame 누적 (0→0.005→0.034→0.090→0.148) | LC world z-up vs OpenVINS Global z-down |
+| **G3: frame convention mismatch** | 🚧 의심 → cycle 2 에서 *반대 방향* 으로 드러남 | LC world z-up *맞음*, OpenVINS Global z 도 up |
 
-자세한 흐름: [[../insight/20260522_tc_msckf_port_journal#P6 debug cycle 1]]
+### Cycle 2 결과 (2026-05-26, 같은 날)
+
+| 시도 | 결과 | 발견 |
+|---|---|---|
+| **gram_schmidt 단독** (mean_accel 으로 R_GtoI 빌드) | 50f ATE 579 cm | OpenVINS Global z = up *진실 발견*. 단 yaw 180° flip — gram_schmidt 가 e_2 cross z 로 임의 yaw 선택 |
+| **Hybrid** (LC R0 + OV bg/ba) | 50f 990 cm, **full 1,599,060 cm (악화)** | yaw align 회복 ✅, v.z residual 감소 (0.148→0.044) ✅, 그러나 ba.z=+0.26 (init window motion contamination) → ATE 30x 폭주 |
+
+**핵심 발견**:
+- ✅ OpenVINS Global z = up (cycle 1 추측 반대)
+- ✅ gram_schmidt 함수 자체는 *yaw 자유* (4-DOF unobservable) — GT 비교 위해서는 LC R0 의 yaw 보존 필요
+- ⚠️ KITTI 0117 의 *첫 1초 init window* 가 *진짜 정지 아님* — OV 식 ba 계산이 *motion contamination* 으로 오염
+
+자세한 흐름: [[../insight/20260522_tc_msckf_port_journal#P6 debug cycle 2]]
+
+### 누적된 부분 성과 (cycle 1 + 2)
+- `include/msckf/init/InitializerHelper.hpp` 신규 — gram_schmidt 포트
+- 어댑터 ctor 시그니처 = `(R0_wi, mean_accel, mean_gyro, gravity_mag, ...)` — *hybrid init* 옵션
+- apps/run_vio.cpp 에 *mean_accel/mean_gyro 직접 계산* (LC init window 와 sync)
 
 ### 트리거 단어
-**`P6 debug cycle 2`** — 가설 G3 검증 + fix.
+**`P6 debug cycle 3`** — KITTI 의 *진짜 정지 구간* + update 효율.
 
-### Cycle 2 시도 순서
-1. **G3a (비침습)**: R0_wi 에 z-flip 행렬 (R_z = diag(1,1,-1)) 곱한 후 set_value. 첫 5 frame v.z 가 *0 근처* 로 수렴 시 성공 지표.
-2. **G3b**: 어댑터 friend 로 Propagator::_gravity 직접 set (0,0,-9.81).
-3. **G3c**: OpenVINS Propagator 에 vector 형태 ctor 추가 (source 패치).
+### Cycle 3 시도 순서
+1. KITTI 0117 IMU 첫 5초의 *accel variance* plot — 정지 구간 시각화.
+2. window 확대 (1→3→5초) 시도.
+3. 효과 없으면 *cycle 1 init revert* (ba=0) 후 update 단독 디버깅.
+4. msckf_updates_ effective 횟수 + chi² gate dropping rate 측정.
+5. NoiseManager sigma_pix 1→3 픽셀 튜닝 (KITTI ORB 가 더 noisy).
 
 ### 다음 액션 (백업)
 
