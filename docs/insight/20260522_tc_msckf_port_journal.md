@@ -817,6 +817,95 @@ The blocking divergence is resolved for the stated success criteria:
 - **R-S3**: T_cam1_cam0 의 baseline 53.7 cm (KITTI) 가 정확히 들어가야. stereo_tracker 의 `baseline()` 또는 calib 파일에서 추출.
 - **R-S4**: cycle 4 의 stereo v0 seed 가 cam0-only MSCKF 였을 때 외부 hack 였는데, cycle 5 에서는 *backend 가 stereo* 이므로 *update 자체* 가 v0 도 잡아줄 수 있음 → seed 유지/제거 결정.
 
+### Step 2 — Opensource read (OV + StereoTracker)
+
+> Plan 의 Step 2a + 2b 를 *단일 read commit* 으로 통합. 두 read 의 발견이 *함께* H1~H3 (stereo MSCKF 구현 분기) 를 결정.
+
+#### 2.1 OV multi-camera MSCKF — 이미 구조적으로 지원
+
+**Feature.h** (`ov_core/src/feat/Feature.h`):
+```cpp
+std::unordered_map<size_t, std::vector<Eigen::VectorXf>> uvs;        // cam_id → pixel list
+std::unordered_map<size_t, std::vector<Eigen::VectorXf>> uvs_norm;   // cam_id → normalized pixel list
+std::unordered_map<size_t, std::vector<double>>          timestamps; // cam_id → timestamp list
+int anchor_cam_id = -1;  // anchor frame's cam_id (ANCHORED rep 용)
+```
+
+→ Feature 자체가 *map<cam_id, ...>* 구조. cam_id 가 0/1 양쪽으로 채우면 자동으로 multi-cam 측정값으로 인식.
+
+**UpdaterMSCKF.cpp::update** (line 99 의 루프):
+```cpp
+for (const auto &clone_calib : state->_calib_IMUtoCAM) {  // 모든 등록된 카메라 순회
+    for (const auto &clone_imu : state->_clones_IMU) {     // 모든 clone pose
+        R_GtoCi = clone_calib.second->Rot() * clone_imu.second->Rot();
+        p_CioinG = clone_imu.second->pos() - R_GtoCi.transpose() * clone_calib.second->pos();
+        clones_cam.insert({clone_calib.first, clones_cami});  // map<cam_id, map<t, ClonePose>>
+    }
+}
+```
+
+→ `state->_calib_IMUtoCAM` 에 cam0+cam1 둘 다 등록되면 *루프가 자동으로* 양쪽 카메라 pose 사용.
+
+**UpdaterHelper.cpp** (line 224-225):
+```cpp
+for (auto& pair : feature.timestamps) {       // pair.first = cam_id
+    for (size_t m = 0; m < feature.timestamps[pair.first].size(); m++) {
+        // 이 카메라의 m-번째 measurement 처리
+    }
+}
+```
+
+→ Feature 의 timestamps map 을 cam_id 별로 순회. uvs[pair.first] / uvs_norm[pair.first] 도 같은 인덱스로 접근.
+
+**결론**: OV 의 UpdaterMSCKF + UpdaterHelper 는 *이미 multi-cam 동작*. 우리가 할 일은 *Feature 의 uvs/uvs_norm/timestamps 의 cam1 entry 를 채우는 것* 뿐.
+
+**Anchor cam_id 주의**: `assert(anchor_cam_id != -1)` 가 ANCHORED representation 경로 (line 78, 113, 241) 에 있음. 우리는 `feat_rep_msckf = GLOBAL_3D` 이므로 anchor 식 안 탐 — 그러나 safety 로 `anchor_cam_id = 0` 명시 권장.
+
+#### 2.2 StereoTracker — cam1 픽셀이 *노출 안 됨*
+
+**현재 노출 (`stereo_tracker.hpp:27-37`)**:
+| accessor | 내용 |
+|---|---|
+| `tracked_count()` | left 추적 N |
+| `tracked_points()` | left rectified pixels (N개) |
+| `tracked_ids()` | track ID (N개, 1:1 with points) |
+| `rectified_left_image()` | left rectified Mat |
+| `rectified_right_image()` | right rectified Mat |
+| `rectified_fx/fy/cx/cy` | rectified intrinsic |
+| `rectified_baseline` | stereo baseline [m] |
+
+**미노출 (필요)**:
+- `prev_pts_r_` — right rectified pixels. `stereo_klt()` 헬퍼에서 left→right KLT 후 *triangulation 만 보존* 하고 right 픽셀은 *그 자리에서 폐기*.
+
+**필요한 확장 (Step 3a)**:
+1. private 멤버에 `std::vector<cv::Point2f> prev_pts_r_;` 추가.
+2. `process()` 안에서 stereo KLT/ORB 정합 직후 left/right 픽셀을 *동시* 보존 (1:1 alignment with `prev_pts_l_`).
+3. public accessor: `const std::vector<cv::Point2f>& tracked_points_right() const`.
+
+**위험 (R-S1)**: 후속 frame 의 KLT 가 left 만 추적 → right 픽셀은 *현재 frame 의 stereo 정합 시점* 의 것. 이게 *time alignment* 측면에서 OV 의 가정 ("같은 timestamp 의 cam0/cam1 measurement") 과 정합되는지 확인. KITTI 의 cam0/cam1 timestamp 가 *동일* (rectified, hardware sync) 하므로 OK.
+
+**LC 영향 없음**: 새 필드/accessor 추가만, 기존 pose 산출 경로 변경 안 함.
+
+#### 2.3 통합 발견 — 구현이 의외로 가볍다
+
+OV side 가 multi-cam 자동 지원 + StereoTracker 의 cam1 픽셀이 사실상 *이미 추적 중* (보존만 안 함) → cycle 5 구현 비용 예상보다 *작음*:
+
+| 단계 | 예상 라인 |
+|---|---|
+| StereoTracker cam1 픽셀 보존 + accessor | ~30 줄 |
+| MsckfPipeline ctor 의 cam1 intrinsic + extrinsic 등록 | ~25 줄 |
+| feed_camera 시그니처 stereo 화 + cam_id 별 채움 | ~40 줄 |
+| run_vio 에서 cam1 정보 전달 | ~20 줄 |
+| **합계** | **~115 줄** |
+
+cycle 4 (mono fix 5종) 의 ~200 줄보다 작음. 단 *디버그* 분량은 측정에 따라.
+
 ### 다음 트리거
 
-**Step 2a** — `read(msckf): study OV multi-camera stereo MSCKF`. OV UpdaterMSCKF.cpp 의 `_calib_IMUtoCAM` 루프 + `clones_cam` map + Feature 의 cam_id 별 측정값 사용 흐름을 *전체 컨텍스트* 로 읽고 journal 에 요약. 코드 0줄.
+**Step 3a** — `feat(msckf): per-camera TrackedFeat + feed_camera sig`. TrackedFeat 또는 feed_camera 시그니처를 *per-cam* 으로 확장. 후보 인터페이스:
+
+- (A) `feed_camera(t, left_tracks, right_tracks)` — 두 vector 인자
+- (B) `TrackedFeat` 에 `cam_id` 필드 추가 + `feed_camera(t, all_tracks)` — 단일 vector
+- (C) `feed_camera(t, std::map<cam_id, vector<TrackedFeat>>)` — 명시적 map
+
+→ (A) 가 가장 명확. left/right 의 *동기* 가 호출자 책임. StereoTracker 의 두 accessor 와 자연 매칭.
