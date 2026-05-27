@@ -2,14 +2,44 @@
 
 연구 마일스톤 기록. 각 버전은 git tag 와 1:1 대응. 형식은 semver 와 유사하나 *연구 단계* 기준 (검증된 baseline → 검증된 신규 contribution).
 
-## [Unreleased] — P6 cycle 2 (accuracy debug, in progress)
+## [Unreleased] — P6 cycle 4 (accuracy debug, next)
 
-- Port `ov_init::InitializerHelper::gram_schmidt` so the adapter can build
-  R_GtoI exactly as OpenVINS expects (Global z aligned with body's
-  gravity-opposite axis).
-- Replace adapter's R0_wi-from-LC path with mean_accel-driven gram_schmidt
-  init. Validate stationary v.z stays near zero.
-- Re-measure KITTI 0117 ATE; target LC parity (~153 cm) or better.
+P6 cycle 3 종료. cycle 4 의 H5 (State init covariance 의 ba block)
+가설 검증부터 진입.
+
+## [v0.3.1-cycle3-locked-out] — 2026-05-26
+
+> 첫 번째 *방법론 적용* 마일스톤. [[feedback-problem-first-then-opensource]]
+> 의 Step1 (정의) → Step2 (opensource 참고) → Step3 (가설별 검증) 을
+> 각 단계 별도 commit 으로 분리. cycle 1+2 의 *즉시 적용* 패턴 탈피.
+
+### Added
+- `tools/probe_kitti_imu_variance.cpp` (140줄, standalone). OV 식 a_var 를
+  sliding window 로 계산. OV gate ref 와 비교. 단독 binary.
+- `msckf_pipeline.cpp` update accept/drop 카운터 (영구).
+
+### Changed
+- `msckf_pipeline.cpp`:
+  - init `ba` cycle 2 OV-식 → `Vector3d::Zero()` (cycle 1 init revert).
+    `ba_ov_would_be` 는 진단 print 보존.
+  - `noises.sigma_a` 2.0e-3 → **5.886e-3** (KAIST yaml, OXTS RT3003 매칭).
+  - `upd_opts_->sigma_pix` 1.0 → **1.5** (KAIST yaml).
+
+### Found
+- **H1 부정** — KITTI 0117 first 1s 의 70.8% sliding window 가 KAIST gate
+  (0.5) 통과. *motion contamination 아님*.
+- **H2 적중** — update accept_pct 8.4% (lock-out). chi² gate 가 state
+  covariance 가 작아서 most measurements drop.
+- **H3 부분 적중** — accept 8.4% → 33.3% (4×) 까지 회복. 50f ATE 940→956,
+  full ATE 53k→57k cm. **chi² gate 조정만으로는 ATE 안 떨어짐**.
+- 새 패턴: full run frame 0–250 cumul accept 70% → 250+ 재차 lock-out.
+  *수렴 후* P 가 다시 작아짐 — H5 (init cov ba) 또는 H6 (marginalize 정보 수축) 후보.
+
+### Methodology gain
+- Step1 commit (`06d026b`): 문제 정의만, 코드 0줄
+- Step2 commit (`64233b0`): OV source 체계 read, 코드 0줄
+- Step3 commits (3개): 가설별 변경 + 측정
+- → cycle 1/2 의 *시행착오 즉시 적용* (롤백 비용 큼) 패턴 탈피
 
 진행 추적: [`docs/Practice/tc_msckf_port_progress.md`](docs/Practice/tc_msckf_port_progress.md)
 

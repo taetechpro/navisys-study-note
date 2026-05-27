@@ -12,11 +12,12 @@ related:
 status: in_progress
 ---
 
-# TC MSCKF (OpenVINS) 포트 — 🚧 P5 통과, P6 정확도 디버깅 진행 중 (2026-05-25)
+# TC MSCKF (OpenVINS) 포트 — 🚧 P5 통과, P6 cycle 3 종료 (2026-05-26)
 
-> **시작일:** 2026-05-22 · **누적 작업:** 약 5 시간 (overview + P1~P5)
-> **상태:** P1+P2+P3+P4+P5 (5/6 stage). KITTI 0117 660 frame **crash-free**. LC 153 cm vs MSCKF 53279 cm (발산).
-> **다음:** `P6 디버그 시작` — R1 quat 변환, chi² gate, FEJ, NoiseManager 추적.
+> **시작일:** 2026-05-22 · **누적 작업:** P6 cycle 1+2+3 포함 다중 사이클
+> **상태:** 5/6 stage + P6 cycle 3 (H1❌ H2✅ H3🟨). LC 152.96 cm vs MSCKF 57,861 cm (chi² lock-out 메커니즘 확인).
+> **다음:** `P6 debug cycle 4` — H5 (State init covariance 의 ba block).
+> **방법론:** cycle 3 부터 [[../../memory/feedback-problem-first-then-opensource]] 적용 (Step1 정의 → Step2 opensource → Step3 가설별 검증).
 > **전체 플랜:** [[../insight/20260522_tc_msckf_port_plan]] (P1~P6 마일스톤)
 
 ---
@@ -246,6 +247,40 @@ KITTI 0117 첫 결과:
 3. 효과 없으면 *cycle 1 init revert* (ba=0) 후 update 단독 디버깅.
 4. msckf_updates_ effective 횟수 + chi² gate dropping rate 측정.
 5. NoiseManager sigma_pix 1→3 픽셀 튜닝 (KITTI ORB 가 더 noisy).
+
+### Cycle 3 결과 (2026-05-26)
+
+> 방법론: [[../../memory/feedback-problem-first-then-opensource]] 의 *문제정의 → opensource 참고 → 가설별 검증* 적용. 각 step 별도 commit.
+
+| 단계 (commit) | 결과 |
+|---|---|
+| Step 1 *problem statement* (`06d026b`) | journal §1–§6 작성, 코드 0줄 |
+| Step 2 *opensource read* (`64233b0`) | OV StaticInitializer / UpdaterMSCKF / NoiseManager 전체 컨텍스트 + KAIST yaml 비교 표, 코드 0줄 |
+| Step 3a *H1 KITTI variance probe* (`582fbec`) | `tools/probe_kitti_imu_variance.cpp` 신규. 70.8% windows < KAIST gate 0.5 → **H1 부정** |
+| Step 3b *H2 init revert + accept counter* (`6357e42`) | ba=0 + submitted/consumed log. 50f accept 8.4% → **H2 적중** (chi² lock-out) |
+| Step 3c *H3 KAIST noise tuning* (`6c3d4a6`) | sigma_a 2.0e-3→5.886e-3, sigma_pix 1.0→1.5. accept 8.4→33.3%. ATE 동등 (940→955 / 53k→57k) → **H3 부분 적중** |
+
+**결론**:
+- H1 ❌ (motion contamination 아님)
+- H2 ✅ (lock-out 메커니즘 확인)
+- H3 🟨 (chi² 통과율 올라가나 ATE 동등 — *충분하지 않음*)
+- 새 패턴: full run frame 0–250 accept 70% → 250+ 재차 lock-out
+
+자세한 흐름: [[../insight/20260522_tc_msckf_port_journal#P6 debug cycle 3 — Problem statement]]
+
+### 누적된 부분 성과 (cycle 3)
+- `tools/probe_kitti_imu_variance.cpp` 신규 (140줄, standalone read-only)
+- msckf_pipeline.cpp 의 update accept/drop counter (영구 유지)
+- KAIST yaml 값 적용 (`sigma_a = 5.886e-3`, `sigma_pix = 1.5`) — *유지*
+- ba 는 `Zero()` 유지 (cycle 1 init 와 동일)
+
+### 트리거 단어 (다음)
+**`P6 debug cycle 4`** — H5 가설 (State init covariance 의 ba block). 우선순위 P0.
+
+### Cycle 4 후보 가설
+- **H5**: State 초기화 시 ba block 의 covariance 가 너무 작음 → ba 자유도 부족 → propagator residual 영원히 잔존. OV `0.02²` 베이스 적용 검증.
+- **H6**: marginalize_old_clone 의 정보 수축. 11-clone window (1.1s @ 10Hz) 가 차량 가속 후 짧음.
+- **H7**: |a|=10.07 vs g=9.81 의 systematic 차이. `kitti_raw_reader` oxts 단위 검증.
 
 ### 다음 액션 (백업)
 
