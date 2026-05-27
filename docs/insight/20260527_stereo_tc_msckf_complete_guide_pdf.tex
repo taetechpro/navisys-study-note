@@ -1,0 +1,59 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=22mm]{geometry}
+\usepackage{fontspec}
+\usepackage{kotex}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{fvextra}
+\usepackage{enumitem}
+\usepackage[protrusion=false,expansion=false]{microtype}
+\usepackage{hyperref}
+\usepackage{newunicodechar}
+\usepackage[
+  pipeTables,
+  tableCaptions,
+  texMathDollars,
+  texMathSingleBackslash,
+  underscores=false,
+  fencedCode
+]{markdown}
+
+\setmainfont{Malgun Gothic}
+\setsansfont{Malgun Gothic}
+\setmainhangulfont{Malgun Gothic}
+\setsanshangulfont{Malgun Gothic}
+\setmonofont{Noto Sans Mono}[Scale=MatchLowercase]
+\setmonohangulfont{Malgun Gothic}
+\newunicodechar{⚠}{!}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue
+}
+
+\definecolor{codebg}{HTML}{F7F7F7}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{
+  breaklines,
+  breakanywhere,
+  fontsize=\small,
+  frame=single,
+  rulecolor=\color{black!20},
+  framesep=3mm,
+  bgcolor=codebg
+}
+
+\setlist{nosep,leftmargin=*}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\renewcommand{\arraystretch}{1.18}
+\setcounter{secnumdepth}{0}
+\sloppy
+
+\begin{document}
+\markdownInput{20260527_stereo_tc_msckf_complete_guide.md}
+\end{document}
