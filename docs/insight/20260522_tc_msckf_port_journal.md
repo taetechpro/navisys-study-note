@@ -534,9 +534,66 @@ Eigen::Vector3d ba = a_avg_2to1 - quat_2_Rot(q_GtoI) * gravity_inG;
 
 → **H3a (sigma_a 만), H3b (sigma_a + sigma_pix)**, 두 단계로 측정.
 
+### 12. H3 결과 — chi² 통과율은 올라가지만 ATE 동등 (2026-05-26)
+
+**H3a** (`sigma_a` 5.886e-3, KAIST yaml):
+
+| 지표 | H2 (default) | H3a |
+|---|---|---|
+| 50f cumul accept | 8.4% | **22.0%** (2.6×) |
+| 50f ATE | 940.79 cm | 991.32 cm |
+| f25 accept | 12.1% | 21.99% |
+
+→ chi² 통과율 명확히 개선. ATE 50f 는 거의 동등.
+
+**H3b** (H3a + `sigma_pix` 1.5, KAIST yaml):
+
+| 지표 | H2 | H3a | **H3b** |
+|---|---|---|---|
+| 50f cumul accept | 8.4% | 22.0% | **33.3%** |
+| 50f ATE | 940.79 cm | 991.32 cm | **955.70 cm** |
+| f25 accept | 12.1% | 21.99% | **33.29%** |
+
+→ 첫 5개 frame accept_pct 추이: 24.6/29.5/35.4/27.3/24.5% — 첫 update 17/69 변화 없음 (sigma 변경이 *후속* update 에서 효과). **이게 결정적**: f1 의 chi² 결과는 변경하지 않음.
+
+**H3b full 660 frame run**:
+
+| 지표 | LC baseline | MSCKF cycle 1 | **MSCKF H3b** |
+|---|---|---|---|
+| Full ATE | 152.96 cm | 53,279 cm | **57,861 cm** |
+| 누적 accept_pct | — | (없음) | 27.8% |
+| f25 accept | — | — | 70.7% (개선) |
+| f250–660 accept | — | — | 0% (대부분) |
+
+→ **새 패턴 발견**: H3b 는 frame 0–250 에서 *update 잘 작동* (cumul 70%) → frame 250 이후 *재차 lock-out* (consumed=0 지속).
+→ ATE 는 cycle 1 와 동등 (57k vs 53k cm).
+
+**진단**:
+- 차량 *움직이기 시작* 후 250 frame 까지 state P 가 healthy → chi² 통과 → update 가능
+- 250 frame 이후 P 가 *다시 작아지거나* measurement spread 가 *다시 떠나감* → lock-out
+- chi² 조정만으로는 풀리지 않음 — *근본 원인이 다른 곳*
+
+### 13. cycle 3 종합 결론
+
+| 가설 | 결과 |
+|---|---|
+| **H1** motion contamination | ❌ 부정 (KITTI 0117 init window 70%+ < KAIST gate) |
+| **H2** update path lock-out | ✅ 적중 (accept 8.4%) |
+| **H3** noise tuning fix | 🟨 부분 (accept 8% → 33%, ATE 동등 — *충분하지 않음*) |
+| **H4** wait_for_jerk 부재 | 보류 (KITTI 가 정지면 무의미) |
+
+**진짜 root cause 후보** (cycle 4 의 H5/H6):
+- **H5: ba initial covariance 부족** — OV StaticInitializer 의 `0.02²` base 가 우리 State 초기화에 안 들어감 (확인 필요). ba 자유도가 *너무 작게 init* → ba update 가 작게만 일어남 → propagator residual 0.26 m/s² 영원히 잔존.
+- **H6: marginalize_old_clone 의 정보 수축** — 11-clone window (1.1s @ 10Hz) 가 차량 가속 후 *짧음*. 오래된 clone 제거 시 ba 의 *long-term observability* 손실.
+- **H7: |a|=10.07 vs g=9.81 의 magnitude mismatch 가 systematic** — IMU scale/단위. `kitti_raw_reader` 의 oxts 단위 검증 + `gravity_norm` 9.81 → 9.811 / 9.807 sweep.
+
+**다음 분기 우선순위**: H5 (State init covariance) — *측정 가능* 하고 *OV 와의 직접 차이* 를 확인.
+
+**Cleanup**: H3a/H3b 적용된 `sigma_a = 5.886e-3, sigma_pix = 1.5` 는 KAIST yaml 값 = *상수 reference*. cycle 4 진입 시 *유지* (적어도 더 나쁘게 만들지 않음).
+
 ### 다음 트리거
 
-**H3a 검증** — `NoiseManager noises;` 다음 라인에 `noises.sigma_a = 5.886e-3; noises.sigma_a_2 = pow(5.886e-3, 2);` 추가 + 50f run. 다른 변경 0.
+**P6 cycle 4 시작** — H5 가설. State 초기화 시 `_imu` 의 covariance block 을 OV StaticInitializer 식 (q:0.02², p:0.05², v:0.01², bg:0.02², ba:**0.02²**) 으로 명시. 우리 코드의 default 가 무엇인지 먼저 *확인 commit* (read), 그 다음 *적용 commit* (debug).
 
 ---
 

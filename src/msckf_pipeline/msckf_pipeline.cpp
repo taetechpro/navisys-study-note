@@ -127,13 +127,25 @@ MsckfPipeline::MsckfPipeline(double t0,
     state_->_cam_intrinsics_cameras.insert({kCamId, cam});
 
     // ---- Propagator + UpdaterMSCKF ----
-    ov_msckf::NoiseManager noises;  // defaults — caller can tune later
+    // H3a: NoiseManager default sigma_a=2.0e-3 is 3× lower than KAIST yaml
+    // (5.886e-3). KITTI uses an OXTS RT3003 — similar grade IMU to KAIST. With
+    // sigma_a too small the propagator's state covariance grows too slowly, the
+    // chi² gate's S = HPH^T + sigma_pix² is too small, and ~92% of features
+    // get dropped (cycle 3 H2). Bump sigma_a to KAIST value; leave everything
+    // else at OV defaults so any improvement is attributable to this knob.
+    ov_msckf::NoiseManager noises;
+    noises.sigma_a   = 5.886e-3;
+    noises.sigma_a_2 = noises.sigma_a * noises.sigma_a;
+    std::cerr << "[msckf:noise] H3a sigma_a=" << noises.sigma_a
+              << " (vs OV default 2.0e-3, KAIST yaml 5.886e-3)\n";
     prop_ = std::make_unique<ov_msckf::Propagator>(noises, gravity_mag);
 
     upd_opts_ = std::make_unique<ov_msckf::UpdaterOptions>();
     upd_opts_->chi2_multipler = 5.0;
-    upd_opts_->sigma_pix      = 1.0;
-    upd_opts_->sigma_pix_sq   = 1.0;
+    upd_opts_->sigma_pix      = 1.5;  // H3b: was 1.0, KAIST yaml uses 1.5
+    upd_opts_->sigma_pix_sq   = upd_opts_->sigma_pix * upd_opts_->sigma_pix;
+    std::cerr << "[msckf:noise] H3b sigma_pix=" << upd_opts_->sigma_pix
+              << " (vs OV header 1.0, KAIST yaml 1.5)\n";
 
     feat_opts_ = std::make_unique<ov_core::FeatureInitializerOptions>();
     // Use defaults (refine_features = true, max_runs = 5, min_dist = 0.10, ...)
