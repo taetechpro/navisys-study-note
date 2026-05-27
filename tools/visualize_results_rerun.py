@@ -66,6 +66,15 @@ class StateLog:
     feat_counts: np.ndarray # (N,)
 
 
+@dataclass
+class ImuLog:
+    timestamps: np.ndarray  # (N,)
+    gyro: np.ndarray        # (N, 3) rad/s
+    accel: np.ndarray       # (N, 3) m/s^2
+    gyro_norm: np.ndarray   # (N,)
+    accel_norm: np.ndarray  # (N,)
+
+
 def read_tum(path: Path) -> Optional[TumPose]:
     if not path.exists():
         print(f"[skip] not found: {path}", file=sys.stderr)
@@ -98,6 +107,23 @@ def read_state_log(path: Path) -> Optional[StateLog]:
         eulers_deg=data[:, 7:10],
         quats=data[:, 10:14],
         feat_counts=data[:, 14].astype(int),
+    )
+
+
+def read_imu_log(path: Path) -> Optional[ImuLog]:
+    if not path.exists():
+        return None
+    data = np.loadtxt(path, comments="#")
+    if data.ndim == 1:
+        data = data.reshape(1, -1)
+    if data.shape[1] < 9:
+        raise ValueError(f"{path}: expected >= 9 columns, got {data.shape[1]}")
+    return ImuLog(
+        timestamps=data[:, 0],
+        gyro=data[:, 1:4],
+        accel=data[:, 4:7],
+        gyro_norm=data[:, 7],
+        accel_norm=data[:, 8],
     )
 
 
@@ -151,6 +177,22 @@ def log_streaming_pose(entity_prefix: str,
                rr.Scalars(float(state.feat_counts[i])))
 
 
+def log_imu_stream(imu: ImuLog) -> None:
+    """IMU 측정값을 timeline 에 stream (gyro/accel/norm)."""
+    if imu is None:
+        return
+    for i, t in enumerate(imu.timestamps):
+        rr.set_time("kitti", duration=float(t))
+        rr.log("/imu/gyro_x_rad_s",   rr.Scalars(float(imu.gyro[i, 0])))
+        rr.log("/imu/gyro_y_rad_s",   rr.Scalars(float(imu.gyro[i, 1])))
+        rr.log("/imu/gyro_z_rad_s",   rr.Scalars(float(imu.gyro[i, 2])))
+        rr.log("/imu/gyro_norm_rad_s", rr.Scalars(float(imu.gyro_norm[i])))
+        rr.log("/imu/accel_x_mps2",   rr.Scalars(float(imu.accel[i, 0])))
+        rr.log("/imu/accel_y_mps2",   rr.Scalars(float(imu.accel[i, 1])))
+        rr.log("/imu/accel_z_mps2",   rr.Scalars(float(imu.accel[i, 2])))
+        rr.log("/imu/accel_norm_mps2", rr.Scalars(float(imu.accel_norm[i])))
+
+
 def log_per_frame_ate(engine_name: str,
                        est: TumPose,
                        gt: TumPose) -> None:
@@ -202,14 +244,18 @@ def main() -> int:
     # ---- Load only the requested engines ----
     msckf_traj = msckf_state = msckf_gt = None
     lc_traj    = lc_state    = lc_gt    = None
+    imu = None
     if show_msckf:
         msckf_traj  = read_tum(args.msckf_dir / "trajectory_aligned_tum.txt")
         msckf_state = read_state_log(args.msckf_dir / "state_log.txt")
         msckf_gt    = read_tum(args.msckf_dir / "gt_tum.txt")
+        imu         = read_imu_log(args.msckf_dir / "imu_log.txt")
     if show_lc:
         lc_traj  = read_tum(args.lc_dir / "trajectory_aligned_tum.txt")
         lc_state = read_state_log(args.lc_dir / "state_log.txt")
         lc_gt    = read_tum(args.lc_dir / "gt_tum.txt")
+        if imu is None:
+            imu = read_imu_log(args.lc_dir / "imu_log.txt")
 
     # ---- ATE summary ----
     msckf_rmse = compute_rmse(msckf_traj, msckf_gt) if show_msckf else float("nan")
@@ -246,6 +292,11 @@ def main() -> int:
             log_streaming_pose("/world",  lc_state,    "lc",    color=[ 60, 130, 250])
         if show_msckf:
             log_streaming_pose("/world",  msckf_state, "msckf", color=[250, 140,  40])
+
+    # ---- IMU measurement stream (sensor input, independent of engine) ----
+    if imu is not None and not args.no_stream_pose:
+        log_imu_stream(imu)
+        print(f"[imu] streamed {len(imu.timestamps)} samples")
 
     # ---- Summary text ----
     parts = [f"KITTI 0117 ({args.engine})"]
