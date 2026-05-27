@@ -13,6 +13,7 @@
 \usepackage[protrusion=false,expansion=false]{microtype}
 \usepackage{hyperref}
 \usepackage{newunicodechar}
+\usepackage{pifont}
 \usepackage[
   pipeTables,
   tableCaptions,
@@ -29,6 +30,39 @@
 \setmonofont{Noto Sans Mono}[Scale=MatchLowercase]
 \setmonohangulfont{Malgun Gothic}
 \newunicodechar{⚠}{!}
+% Emoji/symbol fallbacks (Malgun Gothic 에 없는 글리프 대체)
+\newunicodechar{✅}{\ding{51}}      % heavy check mark
+\newunicodechar{❌}{\ding{55}}      % heavy ballot X
+\newunicodechar{✓}{\ding{51}}
+\newunicodechar{✗}{\ding{55}}
+\newunicodechar{🟨}{\textbf{\textasciitilde}}   % partial
+\newunicodechar{🎉}{!!}
+\newunicodechar{📘}{\textbf{[BOOK]}}
+\newunicodechar{📊}{\textbf{[CHART]}}
+\newunicodechar{🐛}{\textbf{[BUG]}}
+\newunicodechar{≈}{\ensuremath{\approx}}
+\newunicodechar{↑}{\ensuremath{\uparrow}}
+\newunicodechar{↓}{\ensuremath{\downarrow}}
+\newunicodechar{→}{\ensuremath{\rightarrow}}
+\newunicodechar{←}{\ensuremath{\leftarrow}}
+\newunicodechar{►}{\ensuremath{\blacktriangleright}}
+\newunicodechar{◄}{\ensuremath{\blacktriangleleft}}
+\newunicodechar{▼}{\ensuremath{\blacktriangledown}}
+\newunicodechar{│}{\textbar}
+\newunicodechar{─}{-}
+\newunicodechar{├}{\textbar -}
+\newunicodechar{└}{`-}
+\newunicodechar{┃}{\textbar}
+\newunicodechar{╱}{/}
+\newunicodechar{╲}{\textbackslash}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{∞}{\ensuremath{\infty}}
+\newunicodechar{₀}{\ensuremath{_0}}
+\newunicodechar{₁}{\ensuremath{_1}}
+\newunicodechar{₂}{\ensuremath{_2}}
+\newunicodechar{₃}{\ensuremath{_3}}
+\newunicodechar{²}{\ensuremath{^2}}
+\newunicodechar{³}{\ensuremath{^3}}
 
 \hypersetup{
   colorlinks=true,
