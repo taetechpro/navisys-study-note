@@ -185,7 +185,11 @@ def main() -> int:
                         help="Save to .rrd file instead of spawning viewer")
     parser.add_argument("--no-stream-pose", action="store_true",
                         help="Skip per-frame streaming (lighter visualization)")
+    parser.add_argument("--engine", choices=["msckf", "lc", "both"], default="both",
+                        help="Which engine to visualize (default: both)")
     args = parser.parse_args()
+    show_lc    = args.engine in ("lc", "both")
+    show_msckf = args.engine in ("msckf", "both")
 
     # ---- Init Rerun ----
     rr.init("kitti_0117_lc_vs_msckf", spawn=(args.save is None))
@@ -195,20 +199,26 @@ def main() -> int:
     else:
         print("[rerun] spawning viewer")
 
-    # ---- Load all data ----
-    msckf_traj  = read_tum(args.msckf_dir / "trajectory_aligned_tum.txt")
-    msckf_state = read_state_log(args.msckf_dir / "state_log.txt")
-    msckf_gt    = read_tum(args.msckf_dir / "gt_tum.txt")
-    lc_traj     = read_tum(args.lc_dir / "trajectory_aligned_tum.txt")
-    lc_state    = read_state_log(args.lc_dir / "state_log.txt")
-    lc_gt       = read_tum(args.lc_dir / "gt_tum.txt")
+    # ---- Load only the requested engines ----
+    msckf_traj = msckf_state = msckf_gt = None
+    lc_traj    = lc_state    = lc_gt    = None
+    if show_msckf:
+        msckf_traj  = read_tum(args.msckf_dir / "trajectory_aligned_tum.txt")
+        msckf_state = read_state_log(args.msckf_dir / "state_log.txt")
+        msckf_gt    = read_tum(args.msckf_dir / "gt_tum.txt")
+    if show_lc:
+        lc_traj  = read_tum(args.lc_dir / "trajectory_aligned_tum.txt")
+        lc_state = read_state_log(args.lc_dir / "state_log.txt")
+        lc_gt    = read_tum(args.lc_dir / "gt_tum.txt")
 
     # ---- ATE summary ----
-    msckf_rmse = compute_rmse(msckf_traj, msckf_gt)
-    lc_rmse    = compute_rmse(lc_traj, lc_gt)
-    print(f"[ate] LC RMSE    = {lc_rmse:.4f} m  ({lc_rmse*100:.2f} cm)")
-    print(f"[ate] MSCKF RMSE = {msckf_rmse:.4f} m  ({msckf_rmse*100:.2f} cm)")
-    if msckf_rmse > 0 and lc_rmse > 0:
+    msckf_rmse = compute_rmse(msckf_traj, msckf_gt) if show_msckf else float("nan")
+    lc_rmse    = compute_rmse(lc_traj, lc_gt) if show_lc else float("nan")
+    if show_lc:
+        print(f"[ate] LC RMSE    = {lc_rmse:.4f} m  ({lc_rmse*100:.2f} cm)")
+    if show_msckf:
+        print(f"[ate] MSCKF RMSE = {msckf_rmse:.4f} m  ({msckf_rmse*100:.2f} cm)")
+    if show_lc and show_msckf and lc_rmse > 0 and msckf_rmse > 0:
         if msckf_rmse < lc_rmse:
             print(f"[ate] MSCKF 가 LC 보다 {lc_rmse/msckf_rmse:.2f}× 좋음")
         else:
@@ -219,26 +229,33 @@ def main() -> int:
 
     # ---- Static trajectories (always visible) ----
     log_static_trajectory("/world/gt",    msckf_gt or lc_gt, color=[180, 180, 180])
-    log_static_trajectory("/world/lc",    lc_traj,           color=[ 60, 130, 250])
-    log_static_trajectory("/world/msckf", msckf_traj,        color=[250, 140,  40])
+    if show_lc:
+        log_static_trajectory("/world/lc",    lc_traj,    color=[ 60, 130, 250])
+    if show_msckf:
+        log_static_trajectory("/world/msckf", msckf_traj, color=[250, 140,  40])
 
     # ---- Per-frame ATE error scalars ----
-    log_per_frame_ate("lc",    lc_traj,    lc_gt)
-    log_per_frame_ate("msckf", msckf_traj, msckf_gt)
+    if show_lc:
+        log_per_frame_ate("lc",    lc_traj,    lc_gt)
+    if show_msckf:
+        log_per_frame_ate("msckf", msckf_traj, msckf_gt)
 
     # ---- Per-frame state streaming (heavier) ----
     if not args.no_stream_pose:
-        log_streaming_pose("/world",  lc_state,    "lc",    color=[ 60, 130, 250])
-        log_streaming_pose("/world",  msckf_state, "msckf", color=[250, 140,  40])
+        if show_lc:
+            log_streaming_pose("/world",  lc_state,    "lc",    color=[ 60, 130, 250])
+        if show_msckf:
+            log_streaming_pose("/world",  msckf_state, "msckf", color=[250, 140,  40])
 
     # ---- Summary text ----
-    summary = (
-        f"KITTI 0117 (660 frames)\n"
-        f"  LC EKF    : {lc_rmse*100:7.2f} cm\n"
-        f"  MSCKF     : {msckf_rmse*100:7.2f} cm\n"
-        f"  ratio     : {msckf_rmse/lc_rmse:.2f}× (MSCKF/LC)"
-    )
-    rr.log("/summary", rr.TextDocument(summary), static=True)
+    parts = [f"KITTI 0117 ({args.engine})"]
+    if show_lc:
+        parts.append(f"  LC EKF    : {lc_rmse*100:7.2f} cm")
+    if show_msckf:
+        parts.append(f"  MSCKF     : {msckf_rmse*100:7.2f} cm")
+    if show_lc and show_msckf and lc_rmse > 0:
+        parts.append(f"  ratio     : {msckf_rmse/lc_rmse:.2f}x (MSCKF/LC)")
+    rr.log("/summary", rr.TextDocument("\n".join(parts)), static=True)
 
     print("[rerun] done.")
     return 0
