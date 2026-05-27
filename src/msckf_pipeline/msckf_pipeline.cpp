@@ -42,6 +42,7 @@ MsckfPipeline::MsckfPipeline(double t0,
                              const Eigen::Vector3d& mean_gyro,
                              double gravity_mag,
                              const Eigen::Matrix4d& T_cam0_imu,
+                             const Eigen::Matrix4d& T_cam1_imu,
                              double fx_rect, double fy_rect,
                              double cx_rect, double cy_rect,
                              int img_width, int img_height)
@@ -59,7 +60,7 @@ MsckfPipeline::MsckfPipeline(double t0,
     opts.max_clone_size       = env_int("MSCKF_MAX_CLONES", 30);
     opts.max_slam_features    = 0;
     opts.max_msckf_in_update  = 1000;
-    opts.num_cameras          = 1;
+    opts.num_cameras          = 2;  // cycle 5: stereo (rectified cam0 + cam1)
     opts.feat_rep_msckf =
         ov_type::LandmarkRepresentation::Representation::GLOBAL_3D;
     std::cerr << "[msckf:opts] max_clone_size=" << opts.max_clone_size << "\n";
@@ -128,32 +129,32 @@ MsckfPipeline::MsckfPipeline(double t0,
                   << " (this is the residual the update must correct)\n";
     }
 
-    // ---- Camera extrinsic: T_cam0_imu (Hamilton) -> q_CtoI in JPL convention ----
-    // OpenVINS PoseJPL stores q_CtoI, p_IinC. T_cam0_imu : cam0 <- imu, so:
-    //   R_CI = T_cam0_imu.block<3,3>(0,0)  (cam <- imu)
-    //   p_IinC = -R_CI * t_cam0_imu        but easier: t_IC stored as state's p
-    // OpenVINS extrinsic conventions place R_CtoI in the JPL quat and the
-    // camera position in the IMU body frame as p. We follow that:
-    //   q_CtoI  = R_IC -> rot_2_quat  (i.e., quat of R_imu_from_cam transposed)
-    //   p_IinC  = -R_CI * t_CI            (cam origin expressed in cam0 frame... )
-    // Simpler & verified by OpenVINS sources: store [q_CtoI_as_JPL, p_IinC].
-    Eigen::Matrix3d R_CI = T_cam0_imu.block<3, 3>(0, 0);  // cam <- imu
-    Eigen::Vector3d t_CI = T_cam0_imu.block<3, 1>(0, 3);  // imu origin in cam
-    Eigen::Matrix<double, 7, 1> ext;
-    ext.block<4, 1>(0, 0) = ov_core::rot_2_quat(R_CI);  // q_CtoI as JPL of R_CI
-    ext.block<3, 1>(4, 0) = t_CI;                        // p_IinC
-    state_->_calib_IMUtoCAM.at(kCamId)->set_value(ext);
-    state_->_calib_IMUtoCAM.at(kCamId)->set_fej(ext);
+    // ---- Camera extrinsics (cam0 + cam1) -> JPL convention ----
+    // OpenVINS PoseJPL stores [q_CtoI, p_IinC]. The same encoding is used for
+    // every cam_id. With stereoRectify(alpha=0) the two rectified cameras
+    // share K but differ in T_cam_imu by the baseline shift in x.
+    auto set_calib = [&](std::size_t cam_id, const Eigen::Matrix4d& T_cam_imu) {
+        Eigen::Matrix3d R_CI = T_cam_imu.block<3, 3>(0, 0);
+        Eigen::Vector3d t_CI = T_cam_imu.block<3, 1>(0, 3);
+        Eigen::Matrix<double, 7, 1> ext;
+        ext.block<4, 1>(0, 0) = ov_core::rot_2_quat(R_CI);  // q_CtoI as JPL
+        ext.block<3, 1>(4, 0) = t_CI;                        // p_IinC
+        state_->_calib_IMUtoCAM.at(cam_id)->set_value(ext);
+        state_->_calib_IMUtoCAM.at(cam_id)->set_fej(ext);
+    };
+    set_calib(0, T_cam0_imu);
+    set_calib(1, T_cam1_imu);
 
-    // ---- Camera intrinsic + distortion (we registered a rectified stream) ----
+    // ---- Camera intrinsic + distortion (rectified, shared K for cam0/cam1) ----
     Eigen::Matrix<double, 8, 1> intr;
     intr << fx_rect, fy_rect, cx_rect, cy_rect, 0.0, 0.0, 0.0, 0.0;
-    state_->_cam_intrinsics.at(kCamId)->set_value(intr);
-    state_->_cam_intrinsics.at(kCamId)->set_fej(intr);
-
-    auto cam = std::make_shared<ov_core::CamRadtan>(img_width, img_height);
-    cam->set_value(intr);
-    state_->_cam_intrinsics_cameras.insert({kCamId, cam});
+    for (std::size_t cam_id : {0u, 1u}) {
+        state_->_cam_intrinsics.at(cam_id)->set_value(intr);
+        state_->_cam_intrinsics.at(cam_id)->set_fej(intr);
+        auto cam = std::make_shared<ov_core::CamRadtan>(img_width, img_height);
+        cam->set_value(intr);
+        state_->_cam_intrinsics_cameras.insert({cam_id, cam});
+    }
 
     // ---- Propagator + UpdaterMSCKF ----
     // H3a: NoiseManager default sigma_a=2.0e-3 is 3× lower than KAIST yaml
@@ -212,7 +213,8 @@ void MsckfPipeline::feed_imu(double t,
 }
 
 void MsckfPipeline::feed_camera(double t,
-                                const std::vector<TrackedFeat>& tracked) {
+                                const std::vector<TrackedFeat>& left,
+                                const std::vector<TrackedFeat>& right) {
     // ---- Step 1: propagate + clone ----
     // OpenVINS Propagator::propagate_and_clone aborts on dt<=0, so we cannot
     // re-call it at the constructor-supplied t0. For the very first camera
@@ -232,40 +234,72 @@ void MsckfPipeline::feed_camera(double t,
     }
 
     // ---- Step 2: update feature DB with this frame's observations ----
+    // Cycle 5 stereo: cam0 measurements come from `left` (every alive track),
+    // cam1 measurements come from `right` (subset where stereo match was
+    // valid). Both share the same track ID. A feature gets cam0 entries every
+    // frame it's seen; cam1 entries appear only on frames where its stereo
+    // match held. OV's UpdaterMSCKF iterates feature.timestamps as a cam_id
+    // map, so independent insertion per cam is exactly the expected shape.
     std::unordered_set<std::size_t> seen_this_frame;
-    seen_this_frame.reserve(tracked.size());
+    seen_this_frame.reserve(left.size());
 
-    for (const auto& tf : tracked) {
-        seen_this_frame.insert(tf.id);
-
-        auto it = feature_db_.find(tf.id);
+    auto fetch_or_create = [&](std::size_t id) -> std::shared_ptr<ov_core::Feature>& {
+        auto it = feature_db_.find(id);
         if (it == feature_db_.end()) {
             auto feat = std::make_shared<ov_core::Feature>();
-            feat->featid    = tf.id;
+            feat->featid    = id;
             feat->to_delete = false;
-            it = feature_db_.emplace(tf.id, feat).first;
+            // anchor_cam_id stays at the OV default (-1); we use GLOBAL_3D
+            // representation so the anchor path is never taken. Set to 0 as
+            // a defensive default in case representation changes later.
+            feat->anchor_cam_id = 0;
+            it = feature_db_.emplace(id, feat).first;
         }
-        auto& feat = it->second;
+        return it->second;
+    };
 
-        Eigen::Matrix<float, 2, 1> uv;
-        uv << tf.u, tf.v;
+    auto push_measurement = [&](std::shared_ptr<ov_core::Feature>& feat,
+                                std::size_t cam_id, float u, float v) {
+        Eigen::Matrix<float, 2, 1> uv;        uv << u, v;
         Eigen::Matrix<float, 2, 1> uv_n;
-        uv_n << static_cast<float>((tf.u - cx_) / fx_),
-                static_cast<float>((tf.v - cy_) / fy_);
+        // Both rectified cams share the same K, so the normalization uses the
+        // shared fx_/fy_/cx_/cy_ regardless of cam_id.
+        uv_n << static_cast<float>((u - cx_) / fx_),
+                static_cast<float>((v - cy_) / fy_);
+        feat->uvs[cam_id].push_back(uv);
+        feat->uvs_norm[cam_id].push_back(uv_n);
+        feat->timestamps[cam_id].push_back(t);
+    };
 
-        feat->uvs[kCamId].push_back(uv);
-        feat->uvs_norm[kCamId].push_back(uv_n);
-        feat->timestamps[kCamId].push_back(t);
+    // 2a. cam0 measurements (mandatory: defines "feature is alive this frame")
+    for (const auto& tf : left) {
+        seen_this_frame.insert(tf.id);
+        auto& feat = fetch_or_create(tf.id);
+        push_measurement(feat, /*cam_id=*/0, tf.u, tf.v);
+    }
+    // 2b. cam1 measurements (only IDs that already have a cam0 entry; we never
+    // create a feature from a right-only observation because triangulation
+    // would have no temporal continuity)
+    for (const auto& tf : right) {
+        auto it = feature_db_.find(tf.id);
+        if (it == feature_db_.end()) continue;  // right without left — drop
+        push_measurement(it->second, /*cam_id=*/1, tf.u, tf.v);
     }
 
-    // ---- Step 3: collect *lost* features (in DB but not seen this frame),
-    // require at least 2 observations for triangulation. ----
+    // ---- Step 3: collect *lost* features (in DB but no cam0 entry this
+    // frame). cam1-only sightings don't keep a feature alive — once cam0 stops
+    // tracking it, the temporal sequence ends.
+    // Need >= 2 cam0 observations OR the combined cam0+cam1 measurement count
+    // >= 2 for triangulation. We use the OV-style check: a feature passes if
+    // its *total* measurement count (across all cams) >= 2 (Updater itself
+    // imposes a stricter per-cam check during clean_old_measurements).
     std::vector<std::shared_ptr<ov_core::Feature>> feats_to_update;
     std::vector<std::size_t> ids_to_erase;
     for (auto& kv : feature_db_) {
         if (seen_this_frame.count(kv.first)) continue;  // still tracked
-        if (kv.second->timestamps[kCamId].size() < 2) {
-            // not enough views for triangulation; just drop
+        std::size_t total_meas = 0;
+        for (const auto& pair : kv.second->timestamps) total_meas += pair.second.size();
+        if (total_meas < 2) {
             ids_to_erase.push_back(kv.first);
             continue;
         }

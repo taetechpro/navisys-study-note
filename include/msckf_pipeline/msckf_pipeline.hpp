@@ -21,7 +21,7 @@ struct FeatureInitializerOptions;
 }
 
 // MsckfPipeline — adapter from this repo's stereo_tracker output to a
-// monocular TC-MSCKF backend built from ported OpenVINS modules.
+// stereo TC-MSCKF backend built from ported OpenVINS modules.
 //
 // Coordinate / convention notes:
 //   * Hamilton on the boundary (Eigen::Matrix3d / Vector3d).
@@ -29,10 +29,17 @@ struct FeatureInitializerOptions;
 //   * "Global" = world frame supplied by the caller's stationary IMU init,
 //     i.e. gravity-aligned, identical to the LC EKF's world frame.
 //
-// Frontend assumption: caller has already rectified the cam0 image and the
-// (u, v) pixels are in the rectified frame. We register a CamRadtan with
-// zero distortion and rectified intrinsics so OpenVINS treats the rectified
-// stream as a single virtual camera.
+// Frontend assumption: caller has already rectified BOTH cam0 and cam1
+// images and the per-track (u, v) pixels are in the rectified frame. The
+// rectified left and right cameras share the same intrinsic K (standard
+// stereoRectify output with alpha=0); they differ only by the baseline along
+// x in the rectified frame, captured in T_cam1_imu = T_rectcam1_rectcam0 *
+// T_cam0_imu.
+//
+// Cycle 5: backend is stereo (num_cameras=2). Each Feature's
+// uvs[cam_id]/uvs_norm[cam_id]/timestamps[cam_id] is populated independently
+// per cam_id; the OV UpdaterMSCKF + UpdaterHelper iterate over
+// state->_calib_IMUtoCAM, so the multi-camera handling is structural in OV.
 class MsckfPipeline {
 public:
     struct Pose {
@@ -54,12 +61,17 @@ public:
     // OpenVINS-style (ba = mean_accel - R_GtoI * gravity_inG) so the
     // Propagator's stationary cancellation is exact. gram_schmidt alone
     // (cycle 2 first attempt) picked a 180-deg yaw and blew up the ATE.
+    //
+    // T_cam0_imu / T_cam1_imu : rectified-cam <- imu (4x4 Hamilton). The two
+    // rectified cameras share fx/fy/cx/cy, so we only need one intrinsic
+    // block; the extrinsic difference is purely the baseline shift in x.
     MsckfPipeline(double t0,
                   const Eigen::Matrix3d& R0_wi,
                   const Eigen::Vector3d& mean_accel,
                   const Eigen::Vector3d& mean_gyro,
                   double gravity_mag,
                   const Eigen::Matrix4d& T_cam0_imu,
+                  const Eigen::Matrix4d& T_cam1_imu,
                   double fx_rect,
                   double fy_rect,
                   double cx_rect,
@@ -81,7 +93,17 @@ public:
     // Feed one frame's tracked features (already rectified pixels). Triggers
     // propagation to t, clone augment, feature db update, MSCKF update on
     // features that just went out of view, and old-clone marginalization.
-    void feed_camera(double t, const std::vector<TrackedFeat>& tracked);
+    //
+    // Cycle 5 stereo: `left` carries the cam0 measurements for *every* track
+    // alive this frame; `right` carries the cam1 measurements only for those
+    // tracks where the stereo match succeeded (subset of left, matched by
+    // TrackedFeat::id). A feature with only a left observation contributes
+    // to feature.uvs[0] / uvs_norm[0] / timestamps[0] but skips cam1 — this
+    // is exactly how OV's UpdaterMSCKF + UpdaterHelper expect partial-stereo
+    // measurements to be encoded.
+    void feed_camera(double t,
+                     const std::vector<TrackedFeat>& left,
+                     const std::vector<TrackedFeat>& right);
 
     Pose latest_pose() const;
     int  num_clones() const;

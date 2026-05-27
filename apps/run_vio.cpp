@@ -888,9 +888,16 @@ int main(int argc, char** argv) {
             std::cout << "[engine] MSCKF init from " << n_init
                       << " IMU samples, |a|=" << mean_accel.norm() << "\n";
 
-            // MSCKF consumes rectified cam0 pixels, so its camera model must
-            // use the virtual rectified cam0 frame, not the raw cam0 frame.
-            // OpenCV stereoRectify applies p_rect = R_rect_cam0 * p_cam0.
+            // MSCKF consumes rectified cam0 + cam1 pixels, so its camera model
+            // uses the virtual rectified frames, not the raw cam frames. After
+            // cv::stereoRectify with alpha=0, both rectified cams share K and
+            // differ only by the baseline along the rectified x axis.
+            //
+            //   T_rectcam0_imu = R_rectcam0_cam0 * T_cam0_imu                  (rectify rotation)
+            //   T_rectcam1_imu = T_rectcam1_rectcam0 * T_rectcam0_imu          (baseline shift)
+            //   where T_rectcam1_rectcam0 = [I | (-baseline, 0, 0)] (cam1 origin sits
+            //   at +baseline of cam0 in rectified frame, so the *cam1 frame's*
+            //   view of a point in cam0 frame translates by -baseline in x).
             Eigen::Matrix4d T_rectcam0_imu = cam0.T_cam_imu;
             const Eigen::Matrix3d R_rectcam0_cam0 =
                 tracker.rectified_to_cam0_rotation().transpose();
@@ -899,12 +906,20 @@ int main(int argc, char** argv) {
             T_rectcam0_imu.block<3, 1>(0, 3) =
                 R_rectcam0_cam0 * cam0.T_cam_imu.block<3, 1>(0, 3);
 
+            Eigen::Matrix4d T_rectcam1_rectcam0 = Eigen::Matrix4d::Identity();
+            T_rectcam1_rectcam0(0, 3) = -tracker.rectified_baseline();
+            Eigen::Matrix4d T_rectcam1_imu = T_rectcam1_rectcam0 * T_rectcam0_imu;
+            std::cout << "[engine] MSCKF stereo: rectified baseline="
+                      << tracker.rectified_baseline()
+                      << "m  T_rectcam1_imu.t.x=" << T_rectcam1_imu(0, 3) << "\n";
+
             msckf = std::make_unique<MsckfPipeline>(
                 init.t0,
                 init.R0,                                       // yaw-aligned with GT world
                 mean_accel, mean_gyro,                          // OpenVINS-style bg/ba
                 std::abs(init.g_world.z()),
                 T_rectcam0_imu,
+                T_rectcam1_imu,                                 // cycle 5: cam1
                 tracker.rectified_fx(), tracker.rectified_fy(),
                 tracker.rectified_cx(), tracker.rectified_cy(),
                 cam0.width, cam0.height);
@@ -1020,15 +1035,24 @@ int main(int argc, char** argv) {
                     msckf_prev_visual_imu = p_world_imu_visual;
                 }
 
-                // Feed all currently tracked features (rectified left pixels + persistent IDs)
-                std::vector<MsckfPipeline::TrackedFeat> feats;
-                feats.reserve(tracker.tracked_points().size());
+                // Feed all currently tracked features. cam0 measurements cover
+                // every alive track; cam1 measurements cover only the subset
+                // where the stereo match held (stereo_valid()[i] == true).
                 const auto& ids = tracker.tracked_ids();
-                const auto& pts = tracker.tracked_points();
-                for (size_t i = 0; i < pts.size(); ++i) {
-                    feats.push_back({ids[i], pts[i].x, pts[i].y});
+                const auto& pts_l = tracker.tracked_points();
+                const auto& pts_r = tracker.tracked_points_right();
+                const auto& s_ok  = tracker.stereo_valid();
+                std::vector<MsckfPipeline::TrackedFeat> left;
+                std::vector<MsckfPipeline::TrackedFeat> right;
+                left.reserve(pts_l.size());
+                right.reserve(pts_l.size());
+                for (size_t i = 0; i < pts_l.size(); ++i) {
+                    left.push_back({ids[i], pts_l[i].x, pts_l[i].y});
+                    if (i < s_ok.size() && s_ok[i] && i < pts_r.size()) {
+                        right.push_back({ids[i], pts_r[i].x, pts_r[i].y});
+                    }
                 }
-                msckf->feed_camera(cam.timestamp, feats);
+                msckf->feed_camera(cam.timestamp, left, right);
             } else if (pose.valid && frame_count > 0) {
                 ekf.update_vo(p_world_cam);
             }
