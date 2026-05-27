@@ -744,3 +744,79 @@ The blocking divergence is resolved for the stated success criteria:
 - LC parity `< 200 cm` full remains open. Remaining gap likely needs real
   stereo/multi-camera MSCKF update or a stronger frontend, not more static-init
   tuning.
+
+---
+
+## P6 cycle 5 — Stereo TC MSCKF (Step 1: problem statement, 2026-05-27)
+
+> 방법론: [[feedback-problem-first-then-opensource]] 적용. 단계별 별도 commit.
+> Architectural lesson: [[feedback-match-baseline-architecture]] — baseline 의 sensor 구성 매칭 필수.
+
+### 1. 현황 (cycle 4 종료 시점)
+
+- **Backend = monocular MSCKF**: `kCamId=0`, `num_cameras=1`, `TrackedFeat={id,u,v}` (cam0 픽셀만).
+- **LC EKF baseline = stereo update**: cam0 + cam1 의 stereo VO 측정값 사용. ATE 152.96 cm.
+- 결과: 같은 데이터셋에 대해 *서로 다른 sensor 구성* 비교 (apples vs oranges).
+  - mono MSCKF (cycle 4) full ATE = 2,821 cm
+  - stereo LC EKF full ATE = 152 cm
+  - gap 18× — *알고리즘 차이가 아니라 sensor 정보량 차이* 가 지배적.
+
+### 2. 목표
+
+**TC MSCKF (stereo)** 를 구축하여 LC EKF baseline 과 *같은 sensor 입력* 위에서 알고리즘 차이만 비교.
+
+- 사용자 의도 (2026-05-27): "지금 구축해야할건 TC MSCKF VIO(stereo)야... 구축하고 난 뒤에 그걸 기반으로 학습하여 체득하고 다음 스텝으로 갈거임"
+- → 구현이 단지 *작동* 만 하면 안 되고 *읽히고 학습 가능한* 형태여야 함.
+
+### 3. Scope
+
+**포함**:
+- `num_cameras = 2` 로 `State` 변경
+- `_calib_IMUtoCAM[1]` (cam1 ← imu), `_cam_intrinsics[1]`, `_cam_intrinsics_cameras[1]` 등록
+- `TrackedFeat` 또는 `feed_camera` 시그니처를 *per-cam* 으로 확장
+- Feature DB 의 `uvs[cam_id]`, `uvs_norm[cam_id]`, `timestamps[cam_id]` 양쪽 채움
+- StereoTracker 가 cam1 픽셀을 같은 track ID 로 노출하는지 확인 + 노출 안 하면 추가
+- `apps/run_vio.cpp` 에서 cam1 의 rectified intrinsic + T_rectcam1_imu 추출하여 전달
+- LC EKF 와 baseline 비교 가능한 *최소* 변경
+
+**제외 (별도 cycle)**:
+- OpenVINS TrackKLT 전체 포트 (~2000 줄). 본 repo StereoTracker 충분.
+- SLAM feature (max_slam_features=0 유지).
+- Online calibration (do_calib_*=false 유지).
+- Plane / seg-aided 추가 (cycle 6+ 영역).
+
+### 4. 성공기준
+
+| 단계 | 기준 |
+|---|---|
+| 빌드 + 50f crash-free | ✅ 필수 |
+| **50f ATE 측정** | < 200 cm (LC 50f 103 의 2× 이내) |
+| **Full 660f ATE** | **< 200 cm** (LC parity 달성) |
+| Stretch | < 100 cm — OV stereo MSCKF 의 KITTI 보고 수준 |
+
+이론적 근거: TC MSCKF (multi-state constraint + null-space + chi² + FEJ) 는 같은 데이터에서 LC 보다 *더 많은 정보* 추출. 같은 sensor 구성이면 LC 보다 같거나 좋아야 함.
+
+### 5. 분할 commit plan
+
+| Commit | 변경 | 가설 |
+|---|---|---|
+| (현재) `docs(msckf): P6 cycle 5 problem statement` | journal 만, 코드 0줄 | — |
+| `read(msckf): study OV multi-camera stereo MSCKF` | journal 만, OV 의 clones_cam map + Feature multi-cam 구조 요약 | — |
+| `read(msckf): inspect StereoTracker cam1 exposure` | journal 만, cam1 픽셀 availability 확인 결과 | — |
+| `feat(msckf): per-camera TrackedFeat + feed_camera sig` | TrackedFeat / 어댑터 시그니처 | API surface 변경 |
+| `feat(msckf): register cam1 intrinsic + extrinsic` | num_cameras=2, _calib_IMUtoCAM[1], _cam_intrinsics[1] 등록 | OV expects multi-cam state pre-registered |
+| `feat(msckf): stereo feed_camera (cam_id loop)` | feat->uvs[0/1] 양쪽 채움 | UpdaterMSCKF 가 cam_id 별 measurement 사용 |
+| `feat(run_vio): wire stereo tracks to MsckfPipeline` | apps/run_vio.cpp + StereoTracker 확장 (필요시) | end-to-end 연결 |
+| `debug(msckf): cycle 5 first stereo run on KITTI 0117` | 빌드 + 50f / full 측정. journal evidence 표 | 가설 검증 |
+| `docs(msckf): cycle 5 종료 + 학습용 cleanup` | progress.md / CHANGELOG / 어댑터 주석 / tag v0.4.0-stereo-msckf | — |
+
+### 6. 위험 요인
+
+- **R-S1**: StereoTracker 의 cam1 픽셀 정합이 *시간적으로 다른 ID* 일 가능성 — `prev_track_ids_` 가 cam0 KLT 기반만 추적. cam1 픽셀의 ID 동기 필요.
+- **R-S2**: rectified cam1 intrinsic 의 cx/cy 가 cam0 와 *다를 수 있음* (rectification 후에도). KITTI calib 확인.
+- **R-S3**: T_cam1_cam0 의 baseline 53.7 cm (KITTI) 가 정확히 들어가야. stereo_tracker 의 `baseline()` 또는 calib 파일에서 추출.
+- **R-S4**: cycle 4 의 stereo v0 seed 가 cam0-only MSCKF 였을 때 외부 hack 였는데, cycle 5 에서는 *backend 가 stereo* 이므로 *update 자체* 가 v0 도 잡아줄 수 있음 → seed 유지/제거 결정.
+
+### 다음 트리거
+
+**Step 2a** — `read(msckf): study OV multi-camera stereo MSCKF`. OV UpdaterMSCKF.cpp 의 `_calib_IMUtoCAM` 루프 + `clones_cam` map + Feature 의 cam_id 별 측정값 사용 흐름을 *전체 컨텍스트* 로 읽고 journal 에 요약. 코드 0줄.
