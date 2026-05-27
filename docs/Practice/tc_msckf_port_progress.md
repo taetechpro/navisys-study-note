@@ -12,12 +12,12 @@ related:
 status: in_progress
 ---
 
-# TC MSCKF (OpenVINS) 포트 — 🚧 P6 cycle 4 stretch 통과 (2026-05-27)
+# TC MSCKF (OpenVINS) 포트 — 🎉 Stereo backend 구축 완료 (2026-05-27)
 
-> **시작일:** 2026-05-22 · **누적 작업:** P6 cycle 1+2+3+4 포함 다중 사이클
-> **상태:** 5/6 stage + P6 cycle 4. MSCKF 50f 67.88 cm, full 2,821.51 cm. Primary/Stretch 통과, LC full parity 는 남음.
-> **다음:** true stereo MSCKF 관측(cam1) 또는 frontend 강화로 full LC parity 추적.
-> **방법론:** cycle 3 부터 [[../../memory/feedback-problem-first-then-opensource]] 적용 (Step1 정의 → Step2 opensource → Step3 가설별 검증).
+> **시작일:** 2026-05-22 · **누적 작업:** P6 cycle 1+2+3+4+5
+> **상태:** stereo TC MSCKF VIO 작동. LC full 152.96 cm vs MSCKF stereo **256.26 cm** (1.7× gap). 50f 는 MSCKF **22.3 cm** 가 LC 103 cm 압도.
+> **다음:** 사용자 학습 단계 진입 준비됨. (정확도 추가 추적 시 cycle 6: FEJ / chi2 / disparity validity 검토.)
+> **방법론:** [[../../memory/feedback-problem-first-then-opensource]] + [[../../memory/feedback-match-baseline-architecture]] 적용.
 > **전체 플랜:** [[../insight/20260522_tc_msckf_port_plan]] (P1~P6 마일스톤)
 
 ---
@@ -290,6 +290,54 @@ P6 디버깅이 막힐 경우 (예: 2-3 시간 안에 ATE 가 LC 153cm 근처로
 - 옵션 C: ov_msckf 의 *VioManager 의 KITTI config* 가 있는지 검색 — 만약 있다면 NoiseManager / StateOptions 의 *KITTI-specific tuning* 가져옴.
 
 ### P6 의 *crash-free* 단계는 완료. *정확도* 단계가 남음. 자세한 디버깅 순서는 [[../insight/20260522_tc_msckf_port_journal]] 의 P5 entry 참고.
+
+---
+
+## Cycle 5 — Stereo TC MSCKF 구축 (2026-05-27)
+
+> 사용자 지적 (2026-05-27): "KITTI, EuRoC 데이터도 다 stereo 잖아... 지금 구축해야할건 TC MSCKF VIO(stereo)". cycle 1~4 의 mono backend 가 baseline (stereo LC) 과 *architectural mismatch*. [[../../memory/feedback-match-baseline-architecture]] 의 첫 적용.
+
+### 진행 — 3 buildable commits
+
+| Step | Commit | 변경 |
+|---|---|---|
+| 3α | `3630dec` | StereoTracker 의 cam1 픽셀 노출 (`prev_pts_r_` + `stereo_valid_`) |
+| 3β | `19195c2` | MsckfPipeline `num_cameras=2`, `T_cam1_imu` 추가, `feed_camera(t, left, right)` |
+| 3γ | (위 동일) | 첫 stereo run on KITTI 0117 |
+
+### 결과 — 5× / 11× 개선
+
+| Backend | 50f ATE | Full 660f ATE | cumul accept |
+|---|---:|---:|---:|
+| LC EKF baseline | — | **152.96 cm** | — |
+| cycle 4 mono final | 67.88 cm | 2,821.51 cm | 69.7% |
+| **cycle 5 stereo** | **22.33 cm** | **256.26 cm** | **86.6%** |
+
+- 50f: cycle 4 의 3×, LC 의 5× 우위
+- full: cycle 4 의 11×, LC 의 1.7× 까지
+- accept_pct frame 진행에 따라 *증가* (75→86%) — mono 의 lock-out 패턴 사라짐
+
+### 학습 가능 진입 지점
+
+> "구축하고 난 뒤에 학습하여 체득" — 이제 작동하는 코드로 들어가서:
+
+- `msckf_pipeline.cpp::feed_camera` — Hamilton 픽셀 → JPL `feature.uvs[cam_id]` 분기 구조
+- `MsckfPipeline` ctor 의 `set_calib` lambda — JPL extrinsic `[q_CtoI, p_IinC]` 의 의미
+- `Feature` 의 `uvs/uvs_norm/timestamps` 의 `unordered_map<cam_id, vector>` 구조
+- `UpdaterMSCKF::update` 의 6-step 흐름 (clean → clone poses → triangulate → chi² → compress → EKFUpdate)
+- mono 의 v0=0 init scale collapse vs stereo 의 자연 v0 회복 (cycle 4 vs 5)
+
+### 남은 1.7× gap (cycle 6 영역, 학습 후 필요 시)
+
+- FEJ vs no-FEJ
+- chi2_multipler 1.0 (OV yaml) vs 5.0 (header)
+- StereoTracker `stereo_valid_` false 비율 측정
+- max_clone_size 적정성
+- anchor_cam_id 영향
+
+### tags
+- `v0.3.2-cycle4-mono-final` — mono 라인 종결
+- `v0.4.0-stereo-msckf` — stereo 작동 마일스톤
 
 ---
 

@@ -2,10 +2,80 @@
 
 연구 마일스톤 기록. 각 버전은 git tag 와 1:1 대응. 형식은 semver 와 유사하나 *연구 단계* 기준 (검증된 baseline → 검증된 신규 contribution).
 
-## [Unreleased] — Cycle 5 (stereo TC MSCKF, next)
+## [Unreleased] — 학습 단계 / cycle 6 (tuning, optional)
 
-Mono backend 의 한계 (KITTI/EuRoC stereo 데이터 + LC stereo baseline 과의
-architectural mismatch) 확인. Cycle 5 에서 stereo MSCKF 로 재구축.
+Stereo TC MSCKF 작동. 사용자 학습 단계 진입. 정확도 추가 추적 시 cycle 6
+영역 (FEJ / chi2_multipler / disparity validity / max_clone / anchor).
+
+## [v0.4.0-stereo-msckf] — 2026-05-27
+
+> **Architectural fidelity 마일스톤**. LC EKF baseline 과 *같은 sensor 입력*
+> (stereo cam0+cam1 + IMU) 위에서 비교 가능한 stereo TC MSCKF. cycle 1~4
+> 의 mono backend sunk cost 회수.
+
+### Reframing (사용자 지적, 2026-05-27)
+"KITTI, EuRoC 데이터도 다 stereo 잖아... 지금 구축해야할건 TC MSCKF VIO
+(stereo)야". cycle 1~4 의 mono backend 가 stereo baseline (LC EKF) 과
+*architectural mismatch*. 18× full ATE gap 의 본질이 *센서 정보량 차이*
+였음. [[feedback-match-baseline-architecture]] 의 첫 적용.
+
+### Applied (3 buildable commits)
+
+1. **StereoTracker cam1 픽셀 노출** (`3630dec`):
+   - `prev_pts_r_` (left 와 1:1 alignment) + `stereo_valid_` (bool vector).
+   - `tracked_points_right()`, `stereo_valid()` accessor.
+   - bootstrap + subsequent frame 의 stereo KLT 결과 보존.
+   - LC 영향 없음.
+
+2. **MsckfPipeline + run_vio stereo** (`19195c2`):
+   - `num_cameras = 2`, ctor 에 `T_cam1_imu` 추가.
+   - `_calib_IMUtoCAM[0,1]`, `_cam_intrinsics[0,1]`,
+     `_cam_intrinsics_cameras[0,1]` 모두 등록 (lambda 통합).
+   - `feed_camera(t, left, right)` — cam0 measurement = alive 정의,
+     cam1 은 이미 존재하는 feature 에만 add.
+   - `T_rectcam1_imu = T_rectcam1_rectcam0 * T_rectcam0_imu` 계산.
+
+### Results (KITTI 0117)
+
+| Variant | 50f ATE | Full 660f ATE | cumul accept |
+|---|---:|---:|---:|
+| LC EKF baseline | — | **152.96 cm** | — |
+| MSCKF cycle 4 mono | 67.88 cm | 2,821.51 cm | 69.7% |
+| **MSCKF cycle 5 stereo** | **22.33 cm** | **256.26 cm** | **86.6%** |
+
+- 50f: cycle 4 의 3×, LC 의 **5× 우위**
+- Full: cycle 4 의 **11×**, LC 의 **1.7× gap** 까지 도달
+- accept_pct frame 진행 따라 *증가* (75→86%) — frame 250+ lock-out 패턴
+  사라짐
+
+### Success criteria
+- Primary 50f < 500 cm ✅ (22.3 cm, 22× margin)
+- Primary full < 5000 cm ✅ (256 cm)
+- **50f LC parity (< 200 cm)** ✅ (MSCKF 22 < LC 103, 5× 우위)
+- **Full LC parity (< 200 cm)** ⚠️ 1.7× gap (LC 152 vs MSCKF 256)
+- Stretch full < 100 cm ❌
+
+### Learning entry points (사용자 학습용)
+
+> 사용자 의도: "구축하고 난 뒤에 그걸 기반으로 학습하여 체득".
+
+- `src/msckf_pipeline/msckf_pipeline.cpp::feed_camera` — Hamilton 픽셀 →
+  JPL `feature.uvs[cam_id]` 분기 + cam0/cam1 동기 처리
+- `MsckfPipeline` ctor 의 `set_calib` lambda — JPL extrinsic
+  `[q_CtoI, p_IinC]` 의 의미
+- `Feature::uvs/uvs_norm/timestamps` — `unordered_map<cam_id, vector>`
+  로 OV 가 multi-cam 을 *구조적으로* 지원하는 방식
+- `UpdaterMSCKF::update` 6-step (clean → clone poses → triangulate →
+  chi² gate → compress → EKFUpdate)
+- mono 의 v0=0 init scale collapse vs stereo 의 자연 v0 회복 (cycle
+  4 vs 5 의 결정적 차이)
+
+### Remaining (cycle 6 candidates, 필요 시)
+- FEJ vs no-FEJ
+- `chi2_multipler` 1.0 (OV yaml) vs 5.0 (header)
+- `stereo_valid_` false 비율 측정 (cam1 누락 진단)
+- `max_clone_size = 30` 적정성
+- `anchor_cam_id = 0` 의 영향 (GLOBAL_3D 라서 작아야 함)
 
 ## [v0.3.2-cycle4-mono-final] — 2026-05-27
 

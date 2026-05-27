@@ -900,12 +900,123 @@ OV side 가 multi-cam 자동 지원 + StereoTracker 의 cam1 픽셀이 사실상
 
 cycle 4 (mono fix 5종) 의 ~200 줄보다 작음. 단 *디버그* 분량은 측정에 따라.
 
+### Step 3 — Implementation (3α StereoTracker → 3β pipeline+run → 3γ first run)
+
+> Plan 의 5-commit (3a-3e) 을 *3 buildable commits* 로 통합. 각 commit 의
+> 결과 빌드 통과 + 의미 단위 분리.
+
+#### 3α — StereoTracker cam1 픽셀 노출 (`3630dec`)
+
+기존 StereoTracker 가 stereo 정합 후 right 픽셀을 폐기했음. 매 frame
+의 *right rectified pixel* 이 stereo MSCKF 의 `feature.uvs[1]` 필요 조건.
+
+- `prev_pts_r_` (size N, left 와 1:1) + `stereo_valid_` (bool vector) 추가.
+- public: `tracked_points_right()`, `stereo_valid()` accessor.
+- bootstrap: ORB stereo match 의 `pts_r[i]` 보존 (모두 valid=true).
+- subsequent frame: temporal KLT + PnP 후 살아남은 left 에 대해
+  `stereo_klt(gray_l, gray_r, tracked_pts, stereo_ok)` 로 right 재정합.
+  실패 시 placeholder `(-1,-1)` + valid=false.
+- 새 feature (Step 4): ORB 의 `match.pts_r[i]` 직접 보존.
+
+LC 영향 없음 (새 필드/accessor 만, pose 출력 경로 불변). 빌드 OK.
+
+#### 3β — MsckfPipeline + run_vio stereo 통합 (`19195c2`)
+
+**Header**:
+- ctor 에 `T_cam1_imu` 추가. rectified cam0/cam1 이 K 공유.
+- `feed_camera(t, left, right)` 로 split.
+
+**Pipeline**:
+- `num_cameras = 2`. ctor 에서 `_calib_IMUtoCAM[0,1]` /
+  `_cam_intrinsics[0,1]` / `_cam_intrinsics_cameras[0,1]` 모두 등록.
+- `feed_camera`: cam0 measurement = "feature is alive" 의 정의. cam1 은
+  이미 존재하는 feature 에만 add (right without left 는 drop). lost
+  feature 판정 = cam0 부재 + total measurements >= 2.
+
+**run_vio**:
+- `T_rectcam1_imu = T_rectcam1_rectcam0 * T_rectcam0_imu` 계산
+  (rectified baseline 만큼 cam1 frame 의 x shift).
+- StereoTracker 의 `tracked_points_right()` + `stereo_valid()` 로 right
+  vector 빌드.
+
+빌드 OK.
+
+#### 3γ — First stereo run on KITTI 0117
+
+**50f run**:
+```
+[engine] MSCKF stereo: rectified baseline=0.537168m  T_rectcam1_imu.t.x=-0.851245
+[msckf:init] seeded v0 from stereo frontend:  6.225 -0.119 -0.101  |v0|=6.227
+[msckf:upd] f_with_upd=1 submitted=20 consumed=14  accept_pct=70%
+[msckf:upd] f_with_upd=5 submitted=48 consumed=46  accept_pct=79.73%
+[msckf:upd] f_with_upd=25 submitted=23 consumed=13  accept_pct=68.21%
+
+Frames processed : 50
+ATE RMSE         : 22.3354 cm
+```
+
+**Full 660f run**:
+```
+[msckf:upd] f_with_upd=50  cumul accept=69.97%
+[msckf:upd] f_with_upd=100 cumul accept=78.69%
+[msckf:upd] f_with_upd=200 cumul accept=81.94%
+[msckf:upd] f_with_upd=400 cumul accept=85.57%
+[msckf:upd] f_with_upd=650 cumul accept=86.58%   ← frame 250+ lock-out *없음*
+
+Frames processed : 660
+ATE RMSE         : 256.26 cm
+```
+
+### Evidence — cycle 5 vs prior cycles
+
+| 사이클 | Backend | 50f ATE | Full 660f ATE | accept_pct |
+|---|---|---:|---:|---:|
+| LC EKF baseline | stereo VO + EKF | — | **152.96 cm** | — |
+| cycle 1 (default) | mono | 940 cm | 53,279 cm | (없음) |
+| cycle 2 시도 2 (hybrid) | mono | 990 cm | 1,599,060 cm | (없음) |
+| cycle 3 H3b | mono + KAIST noise | 956 cm | 57,861 cm | 27.8% |
+| cycle 4 final | mono + 5종 fix | 67.9 cm | 2,821.5 cm | 69.7% |
+| **cycle 5** | **stereo** | **22.3 cm** | **256.3 cm** | **86.6%** |
+
+→ **stereo backend 가 cycle 4 mono final 대비 50f 3×, full 11× 개선**. cumul accept_pct 가 *frame 진행에 따라 증가* (정상 EKF 거동) — mono 의 frame 250+ lock-out 패턴 사라짐.
+
+### Success criteria 평가
+
+| 기준 | 결과 |
+|---|---|
+| Primary 50f < 500 cm | ✅ 22.3 cm |
+| Primary full < 5000 cm | ✅ 256.3 cm |
+| **50f LC parity (< 200 cm)** | ✅ **5× 우위** (LC 50f 103 cm) |
+| **Full LC parity (< 200 cm)** | ⚠️ **1.7× gap** (LC 152.96 vs MSCKF 256.26) |
+| Stretch full < 100 cm | ❌ |
+
+→ **Architectural fidelity 회복**. LC 와 *같은 sensor 입력* 에서 알고리즘 비교 가능. 50f 에서는 TC MSCKF 가 LC 압도, full 에서는 LC 의 1.7× 까지 도달.
+
+### 남은 1.7× gap 의 성격
+
+cycle 4 narrative 에서 "static-init tuning 으로는 안 떨어짐" 진단이 *정확*. 이제 sensor 정보량 동등 → 알고리즘/튜닝 영역의 작은 차이가 남음. 후보:
+
+1. **FEJ vs no-FEJ** — 우리 `do_fej=true` 인데 OV 의 KITTI 보고 setting 확인 필요.
+2. **chi2_multipler** = 5.0 (header default) vs OV yaml = 1.0. cycle 3 에서 보존 결정했지만 다시 검토 가치.
+3. **StereoTracker 의 disparity validity** — `stereo_valid_` 가 false 비율이 높으면 cam1 measurement 누락 → mono 에 가까운 update.
+4. **`max_clone_size=30`** 적정성 — KITTI 차량 속도에서 3초 window 가 너무 길거나 짧을 가능성.
+5. **anchor_cam_id=0** 의 영향 — GLOBAL_3D representation 이므로 영향 작아야 하나 확인.
+
+이건 cycle 6 영역 (필요 시).
+
+### 사용자 학습 단계 진입 준비
+
+> "구축하고 난 뒤에 학습하여 체득하고 다음 스텝으로 갈거임"
+
+stereo TC MSCKF 가 *작동* 하고 *LC 와 비교 가능* 한 상태. 학습 시작 가능.
+
+학습 가능한 핵심 지점:
+- `msckf_pipeline.cpp::feed_camera` — Hamilton 픽셀 → JPL feature.uvs 구조 변환 + cam_id 분기
+- `MsckfPipeline` ctor 의 `set_calib` lambda — JPL extrinsic 의 의미
+- `Feature` 의 `uvs/uvs_norm/timestamps` 의 cam_id keyed map 구조
+- `UpdaterMSCKF::update` 의 6-step 흐름 (clean → clone poses → triangulate → chi² → compress → EKFUpdate)
+- mono 의 v0=0 init 의 scale collapse vs stereo 의 자연 v0 회복
+
 ### 다음 트리거
 
-**Step 3a** — `feat(msckf): per-camera TrackedFeat + feed_camera sig`. TrackedFeat 또는 feed_camera 시그니처를 *per-cam* 으로 확장. 후보 인터페이스:
-
-- (A) `feed_camera(t, left_tracks, right_tracks)` — 두 vector 인자
-- (B) `TrackedFeat` 에 `cam_id` 필드 추가 + `feed_camera(t, all_tracks)` — 단일 vector
-- (C) `feed_camera(t, std::map<cam_id, vector<TrackedFeat>>)` — 명시적 map
-
-→ (A) 가 가장 명확. left/right 의 *동기* 가 호출자 책임. StereoTracker 의 두 accessor 와 자연 매칭.
+**Step 4** — `docs(msckf): cycle 5 종료 + CHANGELOG + tag v0.4.0-stereo-msckf`. progress.md 갱신, CHANGELOG v0.4.0 entry, navisys-study-note push.
