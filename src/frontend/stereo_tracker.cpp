@@ -121,6 +121,8 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
             double z = pts3d[i][2];
             if (z > 0.1 && z < 50.0) {
                 prev_pts_l_.push_back(kept_l[i]);
+                prev_pts_r_.push_back(match.pts_r[i]);  // cycle 5: cam1 px from ORB stereo match
+                stereo_valid_.push_back(true);          // cycle 5: bootstrap match always valid
                 map_pts_world_.push_back(pts3d[i]); // world = cam0_0 frame
                 prev_track_ids_.push_back(next_id_++);
             }
@@ -180,6 +182,25 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
     // Keep 3D positions from the original bootstrap / step-4 addition; let PnP RANSAC
     // weed out stale points.
 
+    // ---- Cycle 5: stereo KLT for surviving (existing) tracks ----
+    // tracked_pts here holds only features that survived temporal KLT + PnP
+    // inlier filter. Compute their cam1 (right) pixels via stereo KLT and
+    // record validity. New features added in Step 4 below already carry their
+    // cam1 pixel from ORB stereo matching, so we push those directly.
+    std::vector<cv::Point2f> tracked_pts_r;
+    std::vector<bool>        tracked_valid;
+    tracked_pts_r.reserve(tracked_pts.size());
+    tracked_valid.reserve(tracked_pts.size());
+    if (!tracked_pts.empty()) {
+        std::vector<uchar> stereo_ok;
+        auto pts_r_curr = stereo_klt(gray_l, gray_r, tracked_pts, stereo_ok);
+        for (size_t i = 0; i < tracked_pts.size(); ++i) {
+            const bool ok = (i < stereo_ok.size()) && stereo_ok[i];
+            tracked_pts_r.push_back(ok ? pts_r_curr[i] : cv::Point2f(-1.f, -1.f));
+            tracked_valid.push_back(ok);
+        }
+    }
+
     // ---- Step 4: detect+triangulate new features via ORB if below threshold ----
     int need = target_features_ - static_cast<int>(tracked_pts.size());
     if (need > 0) {
@@ -190,6 +211,8 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
                 double z = pts3d_cam[i][2];
                 if (z < 0.1 || z > 50.0) continue;
                 tracked_pts.push_back(match.pts_l[i]);
+                tracked_pts_r.push_back(match.pts_r[i]);  // cycle 5: cam1 px from ORB
+                tracked_valid.push_back(true);             // cycle 5
                 tracked_map.push_back(pose.R * pts3d_cam[i] + pose.t);
                 tracked_ids.push_back(next_id_++);
             }
@@ -200,6 +223,8 @@ StereoTracker::Pose StereoTracker::process(const cv::Mat& img_l,
     prev_img_l_      = gray_l.clone();
     prev_img_r_      = gray_r.clone();
     prev_pts_l_      = tracked_pts;
+    prev_pts_r_      = tracked_pts_r;   // cycle 5
+    stereo_valid_    = tracked_valid;   // cycle 5
     map_pts_world_   = tracked_map;
     prev_track_ids_  = tracked_ids;
 

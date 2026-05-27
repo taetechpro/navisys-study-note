@@ -27,6 +27,11 @@ public:
     int tracked_count() const { return static_cast<int>(prev_pts_l_.size()); }
     const std::vector<cv::Point2f>& tracked_points() const { return prev_pts_l_; }
     const std::vector<std::size_t>& tracked_ids() const { return prev_track_ids_; }
+    // Stereo accessors (cycle 5): cam1 (right rectified) pixel for each track.
+    // Invariant: same size as tracked_points(); stereo_valid()[i] == false means
+    // the right match was lost this frame (use cam0 measurement only).
+    const std::vector<cv::Point2f>& tracked_points_right() const { return prev_pts_r_; }
+    const std::vector<bool>&        stereo_valid()        const { return stereo_valid_; }
     const cv::Mat& rectified_left_image() const { return prev_img_l_; }
     const cv::Mat& rectified_right_image() const { return prev_img_r_; }
     double rectified_fx() const { return fx_rect_; }
@@ -63,6 +68,8 @@ private:
     cv::Mat prev_img_l_;
     cv::Mat prev_img_r_;
     std::vector<cv::Point2f> prev_pts_l_;         // [N] left pixel coords (rectified)
+    std::vector<cv::Point2f> prev_pts_r_;         // [N] right pixel coords (rectified, invalid when !stereo_valid_[i])
+    std::vector<bool>        stereo_valid_;       // [N] whether prev_pts_r_[i] holds a real cam1 match
     std::vector<Eigen::Vector3d> map_pts_world_;  // [N] 3D in world frame
     std::vector<std::size_t> prev_track_ids_;     // [N] persistent feature IDs
 
