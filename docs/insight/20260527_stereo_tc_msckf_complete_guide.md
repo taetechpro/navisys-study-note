@@ -117,10 +117,12 @@ OpenVINS 코드의 `G` 는 본 코드의 `W` 와 동일하다. 두 단어 같이
 
 | 측면 | Hamilton (Eigen 기본) | JPL (OpenVINS, 다수 항공/우주) |
 |---|---|---|
-| 곱셈 순서 | $q_1 q_2$ = $q_1$ 후 $q_2$ | $q_1 q_2$ = $q_2$ 후 $q_1$ |
-| 회전 활성 | $p' = q p q^{-1}$ | $p' = q^{-1} p q$ |
+| 곱셈 의미 | $q_1 \otimes q_2 \rightarrow$ *$q_2$ 먼저 적용 후 $q_1$* (active, $p' = q_1 q_2 p (q_1 q_2)^*$) | $q_1 \otimes q_2 \rightarrow$ frame chain ($R_{GI} = R_{GC} R_{CI}$ 와 같은 순서) |
+| 회전 적용 | $p' = q p q^{-1}$ (active) | $p_{frame2} = q^{-1} p_{frame1} q$ (passive) |
 | $q_w$ 위치 | $(w, x, y, z)$ | $(x, y, z, w)$ |
-| $R(q)$ 의 의미 | active rotation (Hamilton) | $R_{G\to I}$ passive (JPL) |
+| $R(q)$ 의 의미 | active rotation (vector 회전) | $R_{G\to I}$ (passive, frame 변환) |
+
+**한 줄 정리**: Hamilton 의 $\otimes$ 와 R 곱은 *반대 순서* (composite 가 오른쪽부터). JPL 의 $\otimes$ 와 R 곱은 *같은 순서* (composite 가 왼쪽부터). 본 코드의 OV state 가 JPL → 모든 frame chain 이 *왼쪽부터*.
 
 ### 1.2.2 본 코드의 seam
 
@@ -140,7 +142,19 @@ out.R = state_->_imu->Rot().transpose();  // R_wi (Hamilton)
 
 **핵심**: `rot_2_quat` 는 *행렬을 JPL 컨벤션의 q 로* 변환한다. JPL 의 $R_{G\to I}$ 의 q.
 
-### 1.2.3 검증된 round-trip (cycle 1 G2)
+### 1.2.3 `rot_2_quat`: 행렬 → JPL 쿼터니언
+
+OV 의 `rot_2_quat(R)` 의 핵심 식 (Shepperd's method):
+
+1. $T = \text{tr}(R) = R_{11} + R_{22} + R_{33}$
+2. 가장 큰 항을 찾아 안정성 보장:
+   - 만약 $T > R_{ii}$ for all $i$: $q_w = \tfrac{1}{2}\sqrt{1+T}$, 나머지는 $\tfrac{1}{4q_w}(R_{32}-R_{23}, R_{13}-R_{31}, R_{21}-R_{12})$
+   - 아니면 $q_i = \tfrac{1}{2}\sqrt{1 + 2R_{ii} - T}$, 나머지 비례
+3. JPL convention 으로 부호 정규화: $q_w \geq 0$.
+
+이 식이 *수치적으로 안정* (sqrt 안의 값이 항상 $\geq 0$). cycle 1 G2 에서 검증된 round-trip ($|R - R(q(R))| \approx 10^{-16}$) 이 이 식의 정확성 증거.
+
+### 1.2.4 검증된 round-trip (cycle 1 G2)
 
 ```
 | R_state.Rot() - R_GtoI |  ≈ 1.13e-16
@@ -178,13 +192,33 @@ $$
 
 OpenVINS, MSCKF, 거의 모든 modern VIO 가 이 방식.
 
+**State 차원 정리** (본 코드):
+
+| 표현 | 차원 | 구성 |
+|---|---|---|
+| Nominal IMU | **16** | $q(4) + p(3) + v(3) + b_g(3) + b_a(3)$ |
+| Error IMU | **15** | $\delta\bm{\theta}(3) + \delta\bm{p}(3) + \delta\bm{v}(3) + \delta\bm{b}_g(3) + \delta\bm{b}_a(3)$ |
+| Nominal clone (pose) | 7 | $q(4) + p(3)$ |
+| Error clone | 6 | $\delta\bm{\theta}(3) + \delta\bm{p}(3)$ |
+
+공분산 행렬 P 의 차원은 *error state* 기준. IMU + N clones 면 $(15 + 6N) \times (15 + 6N)$.
+
 ### 1.3.3 First Estimates Jacobian (FEJ)
 
-EKF 의 자코비안을 *매 step 의 최신 상태* 에서 계산하면 시스템 observability 가 *깨진다* — 일관성 (consistency) 문제. 해결: 자코비안을 *최초 추정값* (FEJ) 에서 고정.
+**왜 일관성 깨지는가**: VIO 의 unobservable direction (yaw 절대값, 절대 position 4-DOF) 은 *측정값으로 결정 불가*. 그런데 EKF 의 자코비안 $H$ 를 *매 step 의 latest estimate* 에서 다시 계산하면, 이 unobservable 방향에도 *spurious information* 이 누적됨 → $P$ 가 *false 하게 작아짐* → over-confident.
 
-본 코드: `opts.do_fej = true`. OV 의 표준.
+**FEJ 의 해결**: 자코비안을 *최초 추정값* (= first estimate, FE) 에서 *고정*. 즉 propagation Jacobian $\Phi$ 와 measurement Jacobian $H$ 모두 *첫 linearization point* 에서 평가.
 
-영향: yaw drift, position drift 의 *불일치* 가 줄어든다. KITTI 같은 long-horizon 에서 큰 차이.
+수식: 표준 EKF 는 $H_k = \partial h / \partial \bm{x} |_{\bm{x} = \hat{\bm{x}}_k}$. FEJ 는 $H_k = \partial h / \partial \bm{x} |_{\bm{x} = \hat{\bm{x}}^{\text{FE}}}$ where $\hat{\bm{x}}^{\text{FE}}$ = state 가 *clone 으로 stored* 될 때의 추정값.
+
+본 코드: `opts.do_fej = true`. OV 의 표준. `state_->_imu->set_fej(imu0)` 가 첫 추정값을 저장.
+
+**구체적 영향**:
+- yaw drift 의 *축적 속도* 감소 (yaw 가 정확한 unobservable 인 4-DOF 의 일부)
+- position drift 도 비슷
+- KITTI 같은 long-horizon (수백 m) 에서 차이 큼
+
+**해석**: 측정 자코비안의 *값* 이 정확함보다 *전체 EKF 의 consistency* (state cov vs 실제 error 일치) 가 더 중요.
 
 ## 1.4 IMU 운동학
 
@@ -217,15 +251,63 @@ $$
 
 random walk. `NoiseManager::sigma_wb`, `sigma_ab` 가 이 noise.
 
+### 1.4.5 수식 표기 약속 ($\Omega$, skew)
+
+본 가이드와 OV 코드 전반에서 사용:
+
+**Skew-symmetric 행렬** $[\bm{v}]_\times$ (cross product 의 행렬 표현):
+
+$$
+[\bm{v}]_\times = \begin{bmatrix} 0 & -v_z & v_y \\ v_z & 0 & -v_x \\ -v_y & v_x & 0 \end{bmatrix}, \quad [\bm{v}]_\times \bm{u} = \bm{v} \times \bm{u}
+$$
+
+유용한 항등식 (자코비안 유도에서 쓰임): $R [\bm{v}]_\times R^T = [R\bm{v}]_\times$.
+
+**JPL 의 $\Omega(\bm{w})$ 행렬** (쿼터니언 미분):
+
+$$
+\Omega(\bm{w}) = \begin{bmatrix} -[\bm{w}]_\times & \bm{w} \\ -\bm{w}^T & 0 \end{bmatrix} \in \mathbb{R}^{4\times 4}
+$$
+
+이걸로 $\dot{q}_{GI} = \tfrac{1}{2}\Omega(\bm{w})q_{GI}$ 가 정의됨. ($\bm{w} = \bm{w}_{IB}$ = body 각속도)
+
+Hamilton 컨벤션에서는 부호와 element 위치가 다른 $\Omega^H$ 사용. 본 코드는 OV 내부 JPL.
+
 ## 1.5 Stereo 기하
 
-### 1.5.1 핀홀 모델
+### 1.5.1 핀홀 모델 + 왜곡 (CamRadtan)
+
+기본 핀홀:
 
 $$
 u = f_x \cdot X/Z + c_x, \quad v = f_y \cdot Y/Z + c_y
 $$
 
 여기서 $(X, Y, Z)$ = 카메라 좌표계의 점.
+
+**CamRadtan** (Radial-Tangential distortion 모델) 의 8-dim parameter:
+
+$$
+\text{intr} = [f_x, f_y, c_x, c_y, k_1, k_2, p_1, p_2]
+$$
+
+- $k_1, k_2$: *radial* 왜곡 계수 (lens 의 fisheye/barrel 효과)
+- $p_1, p_2$: *tangential* 왜곡 (lens 미세 기울어짐)
+
+왜곡 적용 (정규화 좌표 $(x_n, y_n) = (X/Z, Y/Z)$ 부터):
+
+$$
+\begin{aligned}
+r^2 &= x_n^2 + y_n^2 \\
+x_d &= x_n(1 + k_1 r^2 + k_2 r^4) + 2 p_1 x_n y_n + p_2 (r^2 + 2 x_n^2) \\
+y_d &= y_n(1 + k_1 r^2 + k_2 r^4) + p_1 (r^2 + 2 y_n^2) + 2 p_2 x_n y_n \\
+u &= f_x x_d + c_x, \quad v = f_y y_d + c_y
+\end{aligned}
+$$
+
+본 코드는 *rectified* 스트림 사용 → distortion 항 *모두 0* 설정 (`intr << fx, fy, cx, cy, 0, 0, 0, 0`). CamRadtan 의 distort/undistort 함수가 *항등 함수* 로 동작.
+
+대안 모델: **CamEqui** (Equidistant / fisheye, OV 의 다른 cam class). 본 코드 미사용.
 
 ### 1.5.2 Rectification
 
@@ -697,7 +779,7 @@ feats_consumed_total_  += consumed;
 
 → `submitted - consumed` = drop 수. `consumed / submitted` = accept rate.
 
-### 3.3.5 Step 5 — Marginalize old clone
+### 3.3.5 Step 5 — Marginalize old clone (Schur complement 의 의미)
 
 ```cpp
 while (state_->_clones_IMU.size() > opts.max_clone_size) {
@@ -705,7 +787,27 @@ while (state_->_clones_IMU.size() > opts.max_clone_size) {
 }
 ```
 
-가장 오래된 clone 의 정보를 *공분산에 합쳐서* 제거. Schur complement.
+가장 오래된 clone 을 *제거하면서 정보 손실 없이* 차원만 줄임. 이게 **Schur complement** 의 의미:
+
+상태를 $\bm{x} = (\bm{x}_a, \bm{x}_b)$ 로 분리 ($\bm{x}_b$ = 제거할 clone, $\bm{x}_a$ = 나머지). 공분산:
+
+$$
+P = \begin{bmatrix} P_{aa} & P_{ab} \\ P_{ba} & P_{bb} \end{bmatrix}
+$$
+
+$\bm{x}_b$ 를 marginalize 한 후의 $\bm{x}_a$ 의 공분산:
+
+$$
+P_{aa}^{\text{marg}} = P_{aa} - P_{ab} P_{bb}^{-1} P_{ba}
+$$
+
+핵심: $P_{ab} P_{bb}^{-1} P_{ba}$ 항이 *$\bm{x}_b$ 와 $\bm{x}_a$ 의 cross-correlation 정보를 $P_{aa}^{\text{marg}}$ 로 흡수*. → 단순 drop 이 아니라 *정보 보존*.
+
+비교:
+- 단순 drop: $P_{aa}^{\text{drop}} = P_{aa}$ — cross 정보 *손실*
+- Schur: $P_{aa}^{\text{marg}}$ — cross 정보 *보존*. 가장 오래된 clone 이 보던 *모든 feature 의 기하 제약* 이 *나머지 state 의 covariance 로 누적*.
+
+이게 MSCKF 가 "sliding window 사이즈 제한" + "장기간 일관성" 두 가지를 모두 갖는 비결.
 
 ## 3.4 StereoTracker 의 cycle 5 확장
 
@@ -810,31 +912,53 @@ $$
 
 ## 4.2 측정 자코비안 (stereo feature)
 
-### 4.2.1 측정 모델
+### 4.2.1 측정 모델 (OV 의 실제 분해)
+
+OV `UpdaterHelper::get_feature_jacobian_full` 의 정확한 분해:
 
 $$
-\bm{z} = h(\bm{x}, \bm{p}_F) = \pi(R_{C \leftarrow G}(\bm{p}_F - \bm{p}_{C, G}))
+\bm{p}_{F, I_i} = R_{I \leftarrow G}(\bm{p}_F - \bm{p}_{I_i, G}) \quad \text{(IMU clone frame 의 feature)}
 $$
 
-여기서:
-- $\bm{p}_F$ = feature 의 global 3D 위치
-- $\bm{p}_{C, G}$ = camera 의 global 위치 (clone)
-- $R_{C \leftarrow G}$ = global → camera 회전 (clone 의 $R_{I\leftarrow G}$ + extrinsic $R_{C\leftarrow I}$)
-- $\pi(\cdot)$ = 핀홀 + distortion (본 코드는 0 distortion rectified)
-
-### 4.2.2 Chain rule
-
 $$
-\bm{z} = \pi(\bm{X}_C), \quad \bm{X}_C = R_{CI} R_{IG}(\bm{p}_F - \bm{p}_{CG})
+\bm{p}_{F, C_i} = R_{C \leftarrow I} \cdot \bm{p}_{F, I_i} + \bm{p}_{I, C} \quad \text{(camera frame 의 feature)}
 $$
 
-자코비안:
-- $\frac{\partial \bm{z}}{\partial \bm{X}_C} = \frac{1}{Z}\begin{bmatrix} f_x & 0 & -f_x X/Z \\ 0 & f_y & -f_y Y/Z \end{bmatrix}$
-- $\frac{\partial \bm{X}_C}{\partial \bm{p}_F} = R_{CG}$
-- $\frac{\partial \bm{X}_C}{\partial \bm{p}_{CG}} = -R_{CG}$
-- $\frac{\partial \bm{X}_C}{\partial \bm{\theta}_{IG}} = R_{CI}[R_{IG}(\bm{p}_F - \bm{p}_{CG})]_\times$ (오차 회전)
+$$
+\bm{z} = \pi_{\text{dist}}(\bm{p}_{F, C_i})
+$$
 
-본 코드는 `UpdaterHelper::get_feature_jacobian_full` 에서 이 모든 항을 계산.
+기호:
+- $\bm{p}_F$ = feature 의 global 3D 위치 (state 의 일부)
+- $\bm{p}_{I_i, G}$ = $i$-번째 IMU clone 의 global 위치
+- $R_{I \leftarrow G}$ = $i$-번째 IMU clone 의 회전 (JPL)
+- $(R_{C \leftarrow I}, \bm{p}_{I, C})$ = camera-imu extrinsic (state 에 등록)
+- $\pi_{\text{dist}}(\cdot)$ = 핀홀 + radtan distortion (본 코드는 rectified 라 distort 항등)
+
+이 분해는 *camera pose 가 state 에 직접 없고 IMU clone + extrinsic 으로 표현* 됨을 명시.
+
+### 4.2.2 Chain rule + 자코비안
+
+$\bm{X}_C := \bm{p}_{F, C_i}$. 정규화 좌표 $(x_n, y_n) = (X_C/Z_C, Y_C/Z_C)$.
+
+**Pinhole projection 자코비안** ($Z = Z_C$):
+
+$$
+\frac{\partial \bm{z}}{\partial \bm{X}_C} = \frac{1}{Z}\begin{bmatrix} f_x & 0 & -f_x X/Z \\ 0 & f_y & -f_y Y/Z \end{bmatrix}
+$$
+
+**State 의 각 변수에 대한 derivative** (error state 기준):
+
+- Feature global 위치: $\frac{\partial \bm{X}_C}{\partial \bm{p}_F} = R_{C \leftarrow I} R_{I \leftarrow G} =: R_{C \leftarrow G}$
+- Clone IMU 위치: $\frac{\partial \bm{X}_C}{\partial \bm{p}_{I_i, G}} = -R_{C \leftarrow G}$
+- Clone IMU 회전 (perturbation $R_{IG} \to R_{IG}\exp([\delta\bm{\theta}]_\times)$):
+$$
+\frac{\partial \bm{X}_C}{\partial \delta\bm{\theta}_{IG}} = -R_{C \leftarrow I} \cdot \big[R_{I \leftarrow G}(\bm{p}_F - \bm{p}_{I_i, G})\big]_\times
+$$
+  (부호 ⊖, skew 가 *바깥*. 이전 본 가이드의 부호/위치 부정확분을 정정.)
+- Camera-imu extrinsic ($R_{C\leftarrow I}, \bm{p}_{I, C}$): 본 코드는 calibration off 라 *고정* — H 에 이 column 비활성 (OV 코드의 if-branch).
+
+본 코드는 `UpdaterHelper::get_feature_jacobian_full` 에서 이 모든 항을 계산. FEJ on 일 때 위 식의 $R_{IG}, \bm{p}_{I_i, G}, \bm{p}_F$ 가 *first estimate* 로 평가.
 
 ## 4.3 Null-space projection (Givens)
 
@@ -1277,6 +1401,17 @@ propagator 의 $Q$ block 들:
 
 → propagation 시 state covariance 가 *얼마나 grow* 할지 결정.
 
+**왜 $/dt$ vs $\cdot dt$**: 두 종류의 noise 가 단위가 다름.
+
+- *White noise* (gyro/accel 측정 잡음): power spectral density (PSD) $\sigma^2$ in $(\text{unit}^2 / \text{Hz})$. 연속시간 $\int_0^{dt} \bm{n}(\tau)d\tau$ 의 분산이 $\sigma^2 \cdot dt$. 그러나 IMU 의 *적분된 측정값* 으로 보면 분산이 $\sigma^2 / dt$ 의 형태로 covariance 에 들어감 (sample rate $1/dt$ 의 Riemann sum).
+- *Random walk* (bias drift): bias 자체가 random walk 면 시간 $\Delta t$ 후의 분산이 $\sigma^2 \cdot \Delta t$. 직관적.
+
+이 관계는 IMU spec sheet 의 단위에서도 명시:
+- `sigma_w` 단위: $\text{rad}/\text{s}/\sqrt{\text{Hz}}$ → 시간 적분 시 $\sqrt{dt}$ 로 scaling
+- `sigma_wb` 단위: $\text{rad}/\text{s}^2/\sqrt{\text{Hz}}$ → 시간 적분 시 $\sqrt{dt}$ 로 scaling
+
+KAIST IMU spec 의 단위가 이 형태 → yaml 의 값을 그대로 sigma_w/sigma_wb 에 넣음.
+
 ### 값 변경 시 영향
 
 | sigma_a | 효과 |
@@ -1370,15 +1505,30 @@ OV StaticInitializer 의 값을 그대로 사용. 잘 검증됨. *바꿀 필요 
 
 KITTI 0117 의 *등속 시작* 처리 위한 velocity 초기화.
 
-### 어디서
+### 어디서 (실제 수식)
 
-`apps/run_vio.cpp` 의 stereo 첫 displacement → IMU world velocity 계산:
-```cpp
-Eigen::Vector3d v0 = (p_world_imu_curr - p_world_imu_prev) / (cam.timestamp - prev_t);
-if (v0.norm() > 0.1 && v0.norm() < 50.0) {
-    msckf->seed_initial_velocity(v0);
-}
-```
+`apps/run_vio.cpp` 의 stereo 첫 displacement → IMU world velocity:
+
+1. StereoTracker 의 첫 frame pose: $T_{W \leftarrow C_0^{(0)}} = (R_{WC0}, \bm{t}_{WC0})$ (LC 와 anchor 공유)
+2. 현재 frame pose: $T_{W \leftarrow C_0^{(t)}}$
+3. 두 시점의 IMU world 위치:
+
+$$
+\bm{p}_{I, W}^{(t)} = T_{W \leftarrow C_0^{(t)}} \cdot T_{C_0 \leftarrow I} \cdot \bm{0} = R_{W C_0^{(t)}} \bm{t}_{C_0 I} + \bm{t}_{W C_0^{(t)}}
+$$
+
+여기서 $T_{C_0 \leftarrow I}$ = cam0-imu extrinsic (raw, rectified 아님).
+
+4. Velocity:
+
+$$
+\bm{v}_0 = \frac{\bm{p}_{I, W}^{(t)} - \bm{p}_{I, W}^{(0)}}{t - t_0}
+$$
+
+5. Sanity check: $0.1 < |\bm{v}_0| < 50$ m/s.
+6. `msckf->seed_initial_velocity(v0)` 호출 (한 번만).
+
+이 식이 *frontend pose* (cam0 in world) 를 *IMU world velocity* 로 변환하는 *전체 chain*.
 
 ### 메커니즘
 
@@ -1430,20 +1580,28 @@ Feature 의 3D 위치 표현 방식.
 opts.feat_rep_msckf = LandmarkRepresentation::Representation::GLOBAL_3D;
 ```
 
-### 옵션
+### 옵션과 수학적 의미
 
-| 옵션 | 표현 |
-|---|---|
-| `GLOBAL_3D` (현재) | $\bm{p}_F$ 를 global frame 의 $(X, Y, Z)$ 로 |
-| `ANCHORED_3D` | 특정 cam frame 의 $(X, Y, Z)$ |
-| `ANCHORED_MSCKF_INVERSE_DEPTH` | $(u, v, 1/Z)$ — outdoor 큰 깊이 안정 |
-| `ANCHORED_INVERSE_DEPTH_SINGLE` | $(1/Z)$ only (linearity 보존) |
+| 옵션 | Feature state | parameterize |
+|---|---|---|
+| `GLOBAL_3D` (현재) | $\bm{p}_F = (X, Y, Z)_G$ | global frame 의 Cartesian |
+| `ANCHORED_3D` | $\bm{p}_{F,A} = (X, Y, Z)_A$ | anchor cam frame 의 Cartesian |
+| `ANCHORED_MSCKF_INVERSE_DEPTH` | $(\alpha, \beta, \rho)$ where $\alpha = X/Z, \beta = Y/Z, \rho = 1/Z$ | anchor cam frame normalized + inverse depth |
+| `ANCHORED_INVERSE_DEPTH_SINGLE` | $\rho = 1/Z$ only | anchor cam frame $(u_n, v_n)$ fixed, depth 만 추정 |
 
-### 메커니즘
+여기서 *anchor* = feature 의 *첫 measurement* 가 발생한 cam clone 의 frame. 모든 후속 frame 의 measurement 는 *anchor 와의 상대 pose* 로 해석.
 
-GLOBAL_3D 는 깊이 estimate 이 *Cartesian 변동* 으로. 큰 깊이 (예: 100m) 에서 작은 픽셀 변화도 큰 X/Y/Z 변화 → 수치적 불안정.
+### 메커니즘 — 왜 inverse depth 가 outdoor 에 유리
 
-Inverse depth 는 깊이를 $1/Z$ 로 표현 → 큰 깊이일수록 *작은 값* → 더 안정.
+**GLOBAL_3D 의 문제**: 깊이 $Z$ 가 클수록 (예: 100m) 픽셀 1 px 변화가 $\Delta Z$ 로 큰 값. 자코비안 $\partial u / \partial Z = -f_x X / Z^2$ 이 $1/Z^2$ 로 감소 → 작은 픽셀 noise 도 $Z$ 의 *큰 uncertainty* 로 amplify → covariance 가 *비선형적으로 분포* → linearization 부정확.
+
+**Inverse depth 의 해결**: $\rho = 1/Z$ 로 paramterize 하면 자코비안 $\partial u / \partial \rho = -f_x X$ 가 *깊이 무관 상수* → linearization 이 *큰 깊이에서도 잘 정의*. 또한 $\rho \in [0, \rho_{\max}]$ 의 *bounded* 영역.
+
+**KITTI 의 특성**: 도로/건물의 *큰 깊이 (50-100m)* 가 많음. ground feature 는 *작은 깊이 (3-10m)*. depth 분포가 *광범위* → linearization 의 *영향이 큼*. inverse depth 가 *원리상* 더 적합.
+
+**현재 본 코드의 한계**: GLOBAL_3D 사용. cycle 5 에서 *anchor_cam_id = 0* 으로 *defensive* set 하지만 anchor representation 안 씀. 큰 깊이 feature 의 update 가 *수치적으로 불안정* 할 가능성.
+
+→ Cycle 6 후보: `feat_rep_msckf = ANCHORED_MSCKF_INVERSE_DEPTH` 시도.
 
 ### Reference
 
