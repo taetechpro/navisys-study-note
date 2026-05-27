@@ -54,20 +54,22 @@ MsckfPipeline::MsckfPipeline(double t0,
     state_ = std::make_shared<ov_msckf::State>(opts);
     state_->_timestamp = t0;
 
-    // ---- Hybrid stationary init ----
-    // R_GtoI: take from LC stationary init (preserves yaw alignment with GT
-    //         world frame). gram_schmidt alone picked an arbitrary yaw and
-    //         produced a 180-deg flipped frame on KITTI 0117, ballooning ATE.
-    // bg, ba: compute OpenVINS-style so Propagator's residual at rest is 0.
-    //         ba = mean_accel - R_GtoI * (0,0,gravity_mag) (line 131 of
-    //         ov_init/StaticInitializer.cpp).
+    // ---- P6 cycle 3 H2: revert to cycle 1 init (ba=0) ----
+    // OV-style ba = mean_accel - R*g was the cycle 2 attempt that made ATE
+    // worse (KITTI 0117 |a|=10.07 vs g=9.81 magnitude mismatch puts +0.26 m/s²
+    // into ba.z). H1 probe showed KITTI 0117 init window IS stationary
+    // (a_var < 0.5 KAIST gate), so the issue is NOT motion contamination.
+    // For H2 we isolate update path: keep LC R_GtoI (yaw-aligned with GT) and
+    // bg = mean_gyro, but force ba = 0 so propagate residual reflects raw
+    // |a| - g mismatch and the update has to correct it.
     const Eigen::Matrix3d R_GtoI = R0_wi.transpose();  // world->body
     const Eigen::Vector4d q_GtoI = ov_core::rot_2_quat(R_GtoI);
 
     Eigen::Vector3d gravity_inG;
     gravity_inG << 0.0, 0.0, gravity_mag;
     const Eigen::Vector3d bg = mean_gyro;
-    const Eigen::Vector3d ba = mean_accel - R_GtoI * gravity_inG;
+    const Eigen::Vector3d ba = Eigen::Vector3d::Zero();  // H2: cycle 1 init
+    const Eigen::Vector3d ba_ov = mean_accel - R_GtoI * gravity_inG;  // diag
 
     // ---- IMU 16-dim [q(4), p(3), v(3), bg(3), ba(3)] ----
     Eigen::Matrix<double, 16, 1> imu0;
@@ -85,13 +87,16 @@ MsckfPipeline::MsckfPipeline(double t0,
               << "  gravity_mag=" << gravity_mag << "\n";
     std::cerr << "[msckf:init] mean_gyro=" << mean_gyro.transpose() << "\n";
     std::cerr << "[msckf:init] R_GtoI (Global z is body-up direction) =\n" << R_GtoI << "\n";
-    std::cerr << "[msckf:init] bg=" << bg.transpose() << "  ba=" << ba.transpose() << "\n";
-    // Sanity: predicted body accel at rest = R_GtoI * gravity_inG + ba should == mean_accel
+    std::cerr << "[msckf:init] bg=" << bg.transpose() << "  ba=" << ba.transpose()
+              << " (H2: forced to zero)\n";
+    std::cerr << "[msckf:init] ba_ov_would_be=" << ba_ov.transpose()
+              << "  |ba_ov|=" << ba_ov.norm() << " (diagnostic only)\n";
+    // Sanity: predicted body accel at rest with ba=0 = R_GtoI * gravity_inG
     {
         const Eigen::Vector3d predicted = R_GtoI * gravity_inG + ba;
         const double rest_err = (predicted - mean_accel).norm();
         std::cerr << "[msckf:init] |R_GtoI*g + ba - mean_accel| = " << rest_err
-                  << " (== 0 by construction)\n";
+                  << " (this is the residual the update must correct)\n";
     }
 
     // ---- Camera extrinsic: T_cam0_imu (Hamilton) -> q_CtoI in JPL convention ----
@@ -216,8 +221,31 @@ void MsckfPipeline::feed_camera(double t,
 
     // ---- Step 4: MSCKF update ----
     if (!feats_to_update.empty()) {
+        const int submitted = static_cast<int>(feats_to_update.size());
         updater_->update(state_, feats_to_update);
+        // UpdaterMSCKF mutates feats_to_update in place via erase():
+        //   - features with <2 measurements after clean → erased
+        //   - features that fail triangulation → erased
+        //   - features that fail chi² gate → erased
+        //   - features that pass all gates → remain in vector AND get
+        //     `to_delete=true` at the end.
+        // So `feats_to_update.size()` after the call == count of features
+        // that actually contributed to the EKF update.
+        const int consumed = static_cast<int>(feats_to_update.size());
+        feats_submitted_total_ += submitted;
+        feats_consumed_total_  += consumed;
+        ++frames_with_update_;
         ++msckf_updates_;
+        if (frames_with_update_ <= 5 || frames_with_update_ % 25 == 0) {
+            std::cerr << "[msckf:upd] f_with_upd=" << frames_with_update_
+                      << " submitted=" << submitted
+                      << " consumed=" << consumed
+                      << "  cumul submitted=" << feats_submitted_total_
+                      << " consumed=" << feats_consumed_total_
+                      << "  accept_pct=" << (feats_submitted_total_ > 0 ?
+                          100.0 * feats_consumed_total_ / feats_submitted_total_ : 0.0)
+                      << "%\n";
+        }
     }
 
     // ---- Step 5: marginalize old clone if sliding window is full ----

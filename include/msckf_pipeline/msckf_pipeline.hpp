@@ -100,6 +100,11 @@ private:
     bool first_camera_ = true;
     int  msckf_updates_ = 0;
 
+    // H2 instrumentation: track how many features survive the update path.
+    int  feats_submitted_total_ = 0;   // entered updater_->update()
+    int  feats_consumed_total_  = 0;   // came back NOT marked to_delete
+    int  frames_with_update_    = 0;
+
     // Cache for IMU boundary padding (Propagator needs a sample at/after cam.t)
     double          last_imu_t_ = -1.0;
     Eigen::Vector3d last_imu_w_ = Eigen::Vector3d::Zero();

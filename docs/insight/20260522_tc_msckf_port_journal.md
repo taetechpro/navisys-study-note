@@ -488,9 +488,55 @@ Eigen::Vector3d ba = a_avg_2to1 - quat_2_Rot(q_GtoI) * gravity_inG;
 
 (a) 가 가장 즉시 가치 있음 — cycle 1 baseline (53k cm) 의 발산 원인이 *update path 자체* 인지 결론 나면, init 의 ba.z 0.26 이 *작은 문제* 였는지 확인 가능.
 
+### 10. H2 결과 — update path *거의 작동 안 함* (2026-05-26)
+
+**변경**: `msckf_pipeline.cpp` 두 군데만:
+1. init `ba = Vector3d::Zero()` (cycle 1 init revert). `ba_ov_would_be` 는 진단 print.
+2. `feed_camera` 의 update 호출 전/후 `submitted / consumed` 카운터 + log.
+
+`consumed = feats_to_update.size() after update()` — OV UpdaterMSCKF 가 in-place erase 하므로 *살아남은* 개수 (= chi² + triangulation + clean 모두 통과한 개수).
+
+**실행** (50f, KITTI 0117):
+
+| Frame | submitted | consumed | accept% | 누적 accept% |
+|---|---|---|---|---|
+| f1 | 69 | 17 | 24.6 | 24.6 |
+| f2 | 9 | 5 | 55.6 | 28.2 |
+| f3 | 18 | 2 | 11.1 | 25.0 |
+| f4 | 36 | 1 | 2.8 | 18.9 |
+| f5 | 15 | 0 | 0.0 | 17.0 |
+| f25 | 33 | 4 | 12.1 | **8.4** |
+
+**50f ATE = 940.789 cm** (cycle 1 의 940 cm 와 *정확히 일치*. ba=0 init 동일.)
+
+**해석**:
+- 누적 91.6% chi² drop. update 가 *거의 작동 안 함*.
+- f5 에서 0/15 consumed — propagator residual 이 *너무 빠르게 커져* sigma_pix² + HPH^T 만으로 chi² 통과 못함.
+- 그 결과 state 가 propagator-only 로 drift → v.z = 0.148 m/s @ f4 (관측 그대로).
+
+**악순환 메커니즘**:
+1. init ba=0 → propagate 시 |a|−g = 0.26 m/s² 만큼 residual 누적
+2. residual 이 |a|·dt 적분 → velocity drift
+3. EKF update 가 *measurement residual* 을 잡아야 하는데
+4. state P 가 `sigma_a = 2.0e-3` 기반으로 *작게* grow
+5. chi² test `S = HPH^T + sigma_pix²` 에서 S 가 *작음*
+6. 작은 S → 같은 measurement residual 이 *큰 chi²* 산출 → reject
+7. update 못함 → P 안 grow → 다음 step 도 reject. **lock-out 발생**.
+
+**H2 확인**: update path 자체는 *건강* (f1 17 consumed = first update 정상). **노이즈/공분산 미스매치** 가 *lock-out* 의 원인. → H3 단계로.
+
+### 11. 가설 H3 우선순위 결정
+
+가설 H3 (`sigma_a` underestimate 3× & `sigma_pix` underestimate 1.5×) 가 직접 lock-out 메커니즘 (5) → (6) 을 *완화* 함:
+- `sigma_a 2.0e-3 → 5.9e-3` (KAIST) 로 키우면 P 가 *3× 빠르게* grow → S 가 *9× 커짐* → chi² 작아짐 → 통과율 ↑
+- `sigma_pix 1.0 → 1.5` (KAIST) 도 S 에 직접 +0.5² 가산.
+- `chi2_multipler 5.0 → 1.0` 은 *역방향* (gate 더 좁힘) — KAIST yaml 의 5× more strict. 우리 현재가 *이미 permissive* 한 쪽이라 H3 부분에서 *조정 안 함*.
+
+→ **H3a (sigma_a 만), H3b (sigma_a + sigma_pix)**, 두 단계로 측정.
+
 ### 다음 트리거
 
-**H2 검증** (Task #46) — `cycle 1 init (ba=0)` 으로 revert + `effective_updates/total_features` 카운터 추가 + 50f run. msckf_pipeline.cpp 의 init 부분만 (`ba = Vector3d::Zero()`), 다른 부분 0 변경.
+**H3a 검증** — `NoiseManager noises;` 다음 라인에 `noises.sigma_a = 5.886e-3; noises.sigma_a_2 = pow(5.886e-3, 2);` 추가 + 50f run. 다른 변경 0.
 
 ---
 
