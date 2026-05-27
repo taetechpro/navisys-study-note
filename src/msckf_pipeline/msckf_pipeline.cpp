@@ -17,11 +17,23 @@
 #include "msckf/utils/quat_ops.hpp"
 #include "msckf/utils/sensor_data.hpp"
 
+#include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <unordered_set>
 
 namespace {
 constexpr std::size_t kCamId = 0;  // single (rectified mono) camera
+
+int env_int(const char* name, int fallback) {
+    const char* value = std::getenv(name);
+    return value ? std::atoi(value) : fallback;
+}
+
+double env_double(const char* name, double fallback) {
+    const char* value = std::getenv(name);
+    return value ? std::atof(value) : fallback;
+}
 }  // namespace
 
 MsckfPipeline::MsckfPipeline(double t0,
@@ -44,12 +56,13 @@ MsckfPipeline::MsckfPipeline(double t0,
     opts.do_calib_camera_timeoffset = false;
     opts.do_calib_imu_intrinsics    = false;
     opts.do_calib_imu_g_sensitivity = false;
-    opts.max_clone_size       = 11;
+    opts.max_clone_size       = env_int("MSCKF_MAX_CLONES", 30);
     opts.max_slam_features    = 0;
     opts.max_msckf_in_update  = 1000;
     opts.num_cameras          = 1;
     opts.feat_rep_msckf =
         ov_type::LandmarkRepresentation::Representation::GLOBAL_3D;
+    std::cerr << "[msckf:opts] max_clone_size=" << opts.max_clone_size << "\n";
 
     state_ = std::make_shared<ov_msckf::State>(opts);
     state_->_timestamp = t0;
@@ -81,6 +94,16 @@ MsckfPipeline::MsckfPipeline(double t0,
     state_->_imu->set_value(imu0);
     state_->_imu->set_fej(imu0);
 
+    // OpenVINS StaticInitializer does not leave the State ctor's tiny default
+    // covariance in place. Match its IMU startup covariance so bg/ba can move
+    // enough to absorb KITTI's initial accel magnitude mismatch.
+    Eigen::MatrixXd init_cov =
+        std::pow(0.02, 2) * Eigen::MatrixXd::Identity(state_->_imu->size(), state_->_imu->size());
+    init_cov.block<3, 3>(0, 0) = std::pow(0.02, 2) * Eigen::Matrix3d::Identity();  // q
+    init_cov.block<3, 3>(3, 3) = std::pow(0.05, 2) * Eigen::Matrix3d::Identity();  // p
+    init_cov.block<3, 3>(6, 6) = std::pow(0.01, 2) * Eigen::Matrix3d::Identity();  // v
+    ov_msckf::StateHelper::set_initial_covariance(state_, init_cov, {state_->_imu});
+
     // ---- diagnostic prints ----
     std::cerr << "[msckf:init] mean_accel=" << mean_accel.transpose()
               << "  |a|=" << mean_accel.norm()
@@ -89,6 +112,12 @@ MsckfPipeline::MsckfPipeline(double t0,
     std::cerr << "[msckf:init] R_GtoI (Global z is body-up direction) =\n" << R_GtoI << "\n";
     std::cerr << "[msckf:init] bg=" << bg.transpose() << "  ba=" << ba.transpose()
               << " (H2: forced to zero)\n";
+    std::cerr << "[msckf:init] cov std q/p/v/bg/ba = "
+              << std::sqrt(init_cov(0, 0)) << " / "
+              << std::sqrt(init_cov(3, 3)) << " / "
+              << std::sqrt(init_cov(6, 6)) << " / "
+              << std::sqrt(init_cov(9, 9)) << " / "
+              << std::sqrt(init_cov(12, 12)) << "\n";
     std::cerr << "[msckf:init] ba_ov_would_be=" << ba_ov.transpose()
               << "  |ba_ov|=" << ba_ov.norm() << " (diagnostic only)\n";
     // Sanity: predicted body accel at rest with ba=0 = R_GtoI * gravity_inG
@@ -134,18 +163,19 @@ MsckfPipeline::MsckfPipeline(double t0,
     // get dropped (cycle 3 H2). Bump sigma_a to KAIST value; leave everything
     // else at OV defaults so any improvement is attributable to this knob.
     ov_msckf::NoiseManager noises;
-    noises.sigma_a   = 5.886e-3;
+    noises.sigma_a   = env_double("MSCKF_SIGMA_A", 5.886e-3);
     noises.sigma_a_2 = noises.sigma_a * noises.sigma_a;
     std::cerr << "[msckf:noise] H3a sigma_a=" << noises.sigma_a
               << " (vs OV default 2.0e-3, KAIST yaml 5.886e-3)\n";
     prop_ = std::make_unique<ov_msckf::Propagator>(noises, gravity_mag);
 
     upd_opts_ = std::make_unique<ov_msckf::UpdaterOptions>();
-    upd_opts_->chi2_multipler = 5.0;
-    upd_opts_->sigma_pix      = 1.5;  // H3b: was 1.0, KAIST yaml uses 1.5
+    upd_opts_->chi2_multipler = env_double("MSCKF_CHI2_MULT", 5.0);
+    upd_opts_->sigma_pix      = env_double("MSCKF_SIGMA_PIX", 5.0);
     upd_opts_->sigma_pix_sq   = upd_opts_->sigma_pix * upd_opts_->sigma_pix;
-    std::cerr << "[msckf:noise] H3b sigma_pix=" << upd_opts_->sigma_pix
-              << " (vs OV header 1.0, KAIST yaml 1.5)\n";
+    std::cerr << "[msckf:noise] chi2_multipler=" << upd_opts_->chi2_multipler << "\n";
+    std::cerr << "[msckf:noise] sigma_pix=" << upd_opts_->sigma_pix
+              << " (KITTI 0117 tuned; OV header 1.0, KAIST yaml 1.5)\n";
 
     feat_opts_ = std::make_unique<ov_core::FeatureInitializerOptions>();
     // Use defaults (refine_features = true, max_runs = 5, min_dist = 0.10, ...)
@@ -154,6 +184,19 @@ MsckfPipeline::MsckfPipeline(double t0,
 }
 
 MsckfPipeline::~MsckfPipeline() = default;
+
+void MsckfPipeline::seed_initial_velocity(const Eigen::Vector3d& v_world) {
+    if (!state_ || velocity_seeded_) return;
+
+    Eigen::Matrix<double, 16, 1> imu = state_->_imu->value();
+    imu.block<3, 1>(7, 0) = v_world;
+    state_->_imu->set_value(imu);
+    state_->_imu->set_fej(imu);
+    velocity_seeded_ = true;
+
+    std::cerr << "[msckf:init] seeded v0 from stereo frontend: "
+              << v_world.transpose() << "  |v0|=" << v_world.norm() << "\n";
+}
 
 void MsckfPipeline::feed_imu(double t,
                              const Eigen::Vector3d& gyro,

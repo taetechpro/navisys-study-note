@@ -73,6 +73,11 @@ public:
                   const Eigen::Vector3d& gyro,
                   const Eigen::Vector3d& accel);
 
+    // Seed the initial IMU velocity from the stereo frontend before the first
+    // nonzero camera propagation. KITTI 0117 starts close to constant velocity,
+    // so an IMU static initializer cannot infer v0 from accel variance alone.
+    void seed_initial_velocity(const Eigen::Vector3d& v_world);
+
     // Feed one frame's tracked features (already rectified pixels). Triggers
     // propagation to t, clone augment, feature db update, MSCKF update on
     // features that just went out of view, and old-clone marginalization.
@@ -98,6 +103,7 @@ private:
     int img_w_, img_h_;
 
     bool first_camera_ = true;
+    bool velocity_seeded_ = false;
     int  msckf_updates_ = 0;
 
     // H2 instrumentation: track how many features survive the update path.

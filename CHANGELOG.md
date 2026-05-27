@@ -2,10 +2,56 @@
 
 연구 마일스톤 기록. 각 버전은 git tag 와 1:1 대응. 형식은 semver 와 유사하나 *연구 단계* 기준 (검증된 baseline → 검증된 신규 contribution).
 
-## [Unreleased] — P6 cycle 4 (accuracy debug, next)
+## [Unreleased] — Cycle 5 (stereo TC MSCKF, next)
 
-P6 cycle 3 종료. cycle 4 의 H5 (State init covariance 의 ba block)
-가설 검증부터 진입.
+Mono backend 의 한계 (KITTI/EuRoC stereo 데이터 + LC stereo baseline 과의
+architectural mismatch) 확인. Cycle 5 에서 stereo MSCKF 로 재구축.
+
+## [v0.3.2-cycle4-mono-final] — 2026-05-27
+
+> 협업 AI 진단으로 mono backend 의 blocking divergence 해결. mono 라인의
+> 마지막 마일스톤. cycle 5 stereo 진입 전 학습용 reference 로 영구 보존.
+
+### Reframing
+- Cycle 3 H1 (motion contamination 부정) 의 reasoning trap 확인:
+  `a_var < 0.5` 은 *jerk 없음* 일 뿐 *stationary* 가 아님. KITTI 0117 GT 가
+  첫 5초에 35.5 m 이동 (등속 ~7 m/s). [[feedback-a-var-is-not-stationarity]]
+- → 진짜 원인은 *등속 운동 + v0=0 init 의 scale collapse*.
+
+### Applied (5 fixes, 함께 작동해야 효과)
+1. **H5 init covariance**: OV `StaticInitializer` 식으로 `_imu` 의 cov 명시
+   (q/bg/ba 0.02², p 0.05², v 0.01²). `StateHelper::set_initial_covariance` 사용.
+2. **Rectified cam0 extrinsic**: MSCKF 가 rectified 픽셀 받으므로
+   `T_rectcam0_imu = R_rectcam0_cam0 * T_cam0_imu` 로 변환해 전달.
+3. **Stereo v0 seed** ← 결정적. 첫 stereo frontend 변위 → IMU velocity 초기화.
+4. **max_clone_size** 11 → 30 (`MSCKF_MAX_CLONES` env override).
+5. **sigma_pix** 1.5 → 5.0 (`MSCKF_SIGMA_PIX` env). `MSCKF_CHI2_MULT`,
+   `MSCKF_SIGMA_A` env 도 같이 노출.
+
+### Evidence
+| Variant | 50f ATE | Full 660f ATE |
+|---|---:|---:|
+| cycle 3 H3b (mono, ba=0) | 956 cm | 57,861 cm |
+| + H5 cov | 961 cm | (kept out) |
+| + stereo v0 seed | 94.5 cm | 9,137 cm |
+| + max_clone=30 | — | 5,486 cm |
+| + sigma_pix=5 | **67.9 cm** | **2,821.5 cm** |
+
+### Success criteria
+- Primary `< 500 cm` ✅ (full 2,821, 50f 68)
+- Stretch `< 5,000 cm` ✅ (full 2,821)
+- **50f LC parity** ✅ (MSCKF 68 < LC 103)
+- Full LC parity `< 200 cm` ❌ (LC 152 vs MSCKF 2,821, ~18× gap)
+
+### Known limit
+남은 18× gap 의 성격: *mono backend* 가 stereo 데이터의 cam1 정보를 버림.
+Static-init tuning 으로는 풀리지 않음 → cycle 5 stereo MSCKF.
+
+### Architectural lesson
+[[feedback-match-baseline-architecture]]: KITTI/EuRoC stereo 데이터 +
+LC stereo baseline 인데 MSCKF 를 *암묵적* mono 로 결정한 게 sunk cost
+사이클 1~4 의 근본 원인. 새 구현은 baseline 의 sensor 구성을 *명시적으로*
+유지해야.
 
 ## [v0.3.1-cycle3-locked-out] — 2026-05-26
 

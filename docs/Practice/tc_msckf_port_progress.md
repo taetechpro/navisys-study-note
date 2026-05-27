@@ -12,11 +12,11 @@ related:
 status: in_progress
 ---
 
-# TC MSCKF (OpenVINS) 포트 — 🚧 P5 통과, P6 cycle 3 종료 (2026-05-26)
+# TC MSCKF (OpenVINS) 포트 — 🚧 P6 cycle 4 stretch 통과 (2026-05-27)
 
-> **시작일:** 2026-05-22 · **누적 작업:** P6 cycle 1+2+3 포함 다중 사이클
-> **상태:** 5/6 stage + P6 cycle 3 (H1❌ H2✅ H3🟨). LC 152.96 cm vs MSCKF 57,861 cm (chi² lock-out 메커니즘 확인).
-> **다음:** `P6 debug cycle 4` — H5 (State init covariance 의 ba block).
+> **시작일:** 2026-05-22 · **누적 작업:** P6 cycle 1+2+3+4 포함 다중 사이클
+> **상태:** 5/6 stage + P6 cycle 4. MSCKF 50f 67.88 cm, full 2,821.51 cm. Primary/Stretch 통과, LC full parity 는 남음.
+> **다음:** true stereo MSCKF 관측(cam1) 또는 frontend 강화로 full LC parity 추적.
 > **방법론:** cycle 3 부터 [[../../memory/feedback-problem-first-then-opensource]] 적용 (Step1 정의 → Step2 opensource → Step3 가설별 검증).
 > **전체 플랜:** [[../insight/20260522_tc_msckf_port_plan]] (P1~P6 마일스톤)
 
@@ -30,7 +30,7 @@ status: in_progress
 [P3] update + feat 포트 .................... ✅ 완료 (2026-05-25)
 [P4] msckf_pipeline 어댑터 ................. ✅ 완료 (2026-05-25)
 [P5] 첫 빌드·실행·디버그 ................... ✅ crash-free (2026-05-25)
-[P6] KITTI 0117 검증 + LC 비교 ............. 🚧 발산 디버깅 단계
+[P6] KITTI 0117 검증 + LC 비교 ............. 🚧 stretch 통과, LC parity 남음
 ```
 
 진행률: **5/6 stage 통과 (83%)**, P6 의 *crash-free 단계* 까지 도달. *ATE 개선* 단계 진행 중.
@@ -335,3 +335,38 @@ P6 완료 시 본 문서가 다음 상태로 전환:
 - 새 섹션 **"최종 실행 검증"** 추가 (KITTI 0117 ATE 수치 + LC 153cm 와의 비교)
 
 [[LidarSegmenter session_progress]] 가 종료 시 변한 형식이 모범 사례.
+
+---
+
+## P6 debug cycle 4 완료 — KITTI 0117 blocking divergence 해소 (2026-05-27)
+
+### 핵심 발견
+
+- cycle 3 의 chi lock-out 은 1차 원인이 아니라 결과였다.
+- KITTI 0117 초반은 accel variance 가 낮지만 실제로는 등속 주행이다. GT 기준 첫 5초 약 35.5 m 이동.
+- mono MSCKF 를 `v0=0` 으로 시작하면 scale/velocity 가 10x 작게 잡히고, 이후 residual 증가 → chi gate starvation 으로 이어진다.
+
+### 적용된 기본값
+
+- OpenVINS StaticInitializer 와 같은 IMU 초기 covariance 명시 적용.
+- rectified cam0 pixel 에 맞게 MSCKF camera extrinsic 을 rectified frame 으로 변환.
+- 첫 stereo frontend 변위로 MSCKF 초기 velocity seed.
+- `max_clone_size = 30`
+- `sigma_pix = 5.0`, `chi2_multipler = 5.0`, `sigma_a = 5.886e-3`
+- 디버그 override: `MSCKF_MAX_CLONES`, `MSCKF_SIGMA_PIX`, `MSCKF_CHI2_MULT`, `MSCKF_SIGMA_A`
+
+### 최종 검증
+
+```bash
+cmake --build build -j4 --target run_vio
+./build/run_vio config/kitti_raw_2011_09_26_drive_0117_local_50f.yaml --engine msckf
+./build/run_vio config/_full_msckf.yaml --engine msckf
+```
+
+| Run | Before cycle 4 | After cycle 4 |
+|---|---:|---:|
+| 50f MSCKF | 956 cm | **67.8773 cm** |
+| full 660f MSCKF | 57,861 cm | **2,821.51 cm** |
+
+Status: primary `<500 cm` and stretch `<5,000 cm` passed. Full LC parity
+`<200 cm` remains future work, likely requiring true stereo MSCKF observations.

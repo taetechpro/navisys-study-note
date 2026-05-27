@@ -888,12 +888,23 @@ int main(int argc, char** argv) {
             std::cout << "[engine] MSCKF init from " << n_init
                       << " IMU samples, |a|=" << mean_accel.norm() << "\n";
 
+            // MSCKF consumes rectified cam0 pixels, so its camera model must
+            // use the virtual rectified cam0 frame, not the raw cam0 frame.
+            // OpenCV stereoRectify applies p_rect = R_rect_cam0 * p_cam0.
+            Eigen::Matrix4d T_rectcam0_imu = cam0.T_cam_imu;
+            const Eigen::Matrix3d R_rectcam0_cam0 =
+                tracker.rectified_to_cam0_rotation().transpose();
+            T_rectcam0_imu.block<3, 3>(0, 0) =
+                R_rectcam0_cam0 * cam0.T_cam_imu.block<3, 3>(0, 0);
+            T_rectcam0_imu.block<3, 1>(0, 3) =
+                R_rectcam0_cam0 * cam0.T_cam_imu.block<3, 1>(0, 3);
+
             msckf = std::make_unique<MsckfPipeline>(
                 init.t0,
                 init.R0,                                       // yaw-aligned with GT world
                 mean_accel, mean_gyro,                          // OpenVINS-style bg/ba
                 std::abs(init.g_world.z()),
-                cam0.T_cam_imu,
+                T_rectcam0_imu,
                 tracker.rectified_fx(), tracker.rectified_fy(),
                 tracker.rectified_cx(), tracker.rectified_cy(),
                 cam0.width, cam0.height);
@@ -958,6 +969,10 @@ int main(int argc, char** argv) {
         int imu_count = 0;
         int lidar_segmented_frames = 0;
         int depth_segmented_frames = 0;
+        bool msckf_have_visual_imu = false;
+        bool msckf_velocity_seeded = false;
+        double msckf_prev_visual_t = -1.0;
+        Eigen::Vector3d msckf_prev_visual_imu = Eigen::Vector3d::Zero();
         const auto wall_start = std::chrono::steady_clock::now();
 
         for (const auto& cam : cam_data) {
@@ -984,6 +999,27 @@ int main(int argc, char** argv) {
             const auto pose = tracker.process(img_l, img_r);
             const Eigen::Vector3d p_world_cam = R_WC0 * pose.t + t_WC0;
             if (use_msckf) {
+                const Eigen::Matrix3d R_world_cam = R_WC0 * pose.R;
+                const Eigen::Vector3d p_world_imu_visual =
+                    p_world_cam + R_world_cam * cam0.T_cam_imu.block<3, 1>(0, 3);
+                if (!msckf_have_visual_imu) {
+                    msckf_prev_visual_t = cam.timestamp;
+                    msckf_prev_visual_imu = p_world_imu_visual;
+                    msckf_have_visual_imu = true;
+                } else if (!msckf_velocity_seeded && msckf->msckf_update_count() == 0) {
+                    const double dt = cam.timestamp - msckf_prev_visual_t;
+                    Eigen::Vector3d v0 = Eigen::Vector3d::Zero();
+                    if (dt > 1e-6) {
+                        v0 = (p_world_imu_visual - msckf_prev_visual_imu) / dt;
+                    }
+                    if (std::isfinite(v0.norm()) && v0.norm() > 0.1 && v0.norm() < 50.0) {
+                        msckf->seed_initial_velocity(v0);
+                        msckf_velocity_seeded = true;
+                    }
+                    msckf_prev_visual_t = cam.timestamp;
+                    msckf_prev_visual_imu = p_world_imu_visual;
+                }
+
                 // Feed all currently tracked features (rectified left pixels + persistent IDs)
                 std::vector<MsckfPipeline::TrackedFeat> feats;
                 feats.reserve(tracker.tracked_points().size());

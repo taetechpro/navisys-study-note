@@ -679,3 +679,68 @@ Eigen::Vector3d ba = a_avg_2to1 - quat_2_Rot(q_GtoI) * gravity_inG;
 - IMU 정지 초기화 → State 초기 공분산
 - `apps/run_vio.cpp` 에 `--engine=msckf` 옵션 추가 (LC 와 공존)
 - 빌드 통과 후 run_vio 실행만 가능한 상태가 목표 (트래젝토리 출력은 P5)
+
+---
+
+## P6 debug cycle 4 — KITTI 0117 scale + gate recovery (2026-05-27)
+
+### Problem update
+
+Cycle 3 framed the failure as a pure chi lock-out. Cycle 4 showed the lock-out
+was a downstream symptom. KITTI 0117's first frames are low-accel-variance but
+not actually stationary: GT moves about 35.5 m in the first 5 s. Starting mono
+MSCKF with `v0=0` caused a 10x trajectory scale underestimate, then residuals
+grew and the chi gate locked out late-frame features.
+
+### Applied fixes
+
+1. **H5 init covariance parity**: after `State` construction, explicitly apply
+   OpenVINS StaticInitializer IMU covariance: q/bg/ba std 0.02, p std 0.05,
+   v std 0.01. This increased feature accept but did not fix ATE by itself.
+2. **Rectified camera extrinsic**: MSCKF consumes rectified cam0 pixels, so
+   `run_vio` now passes `T_rectcam0_imu = R_rectcam0_cam0 * T_cam0_imu` instead
+   of raw cam0 extrinsic.
+3. **Initial velocity seed**: before the first nonzero MSCKF propagation,
+   seed IMU `v0` from the stereo frontend's first visual IMU displacement.
+   This uses the existing stereo tracker, not GT.
+4. **H6 clone window**: default `max_clone_size` 11 -> 30. Env override:
+   `MSCKF_MAX_CLONES`.
+5. **KITTI 0117 pixel noise tuning**: default `sigma_pix` 1.5 -> 5.0 to avoid
+   late-frame gate starvation. Env overrides added for `MSCKF_SIGMA_PIX`,
+   `MSCKF_CHI2_MULT`, `MSCKF_SIGMA_A`.
+
+### Evidence
+
+| Variant | 50f ATE | Full 660f ATE | Notes |
+|---|---:|---:|---|
+| cycle 3 H3b | 956 cm | 57,861 cm | ba=0, KAIST sigma_a/pix |
+| H5 covariance only | 961 cm | not kept | accept up, scale still wrong |
+| + stereo v0 seed | 94.5 cm | 9,137 cm | primary target passed |
+| + max_clone_size=20 | - | 6,769 cm | H6 positive |
+| + max_clone_size=30 | - | 5,486 cm | best clone window |
+| + sigma_pix=3 | - | 4,722 cm | stretch target passed |
+| + sigma_pix=5 | **67.9 cm** | **2,821.5 cm** | final default |
+| + sigma_pix=8 | - | 3,854.7 cm | too permissive / worse |
+
+Final default command:
+
+```bash
+./build/run_vio config/kitti_raw_2011_09_26_drive_0117_local_50f.yaml --engine msckf
+./build/run_vio config/_full_msckf.yaml --engine msckf
+```
+
+Final verified outputs:
+
+- 50f: `ATE RMSE = 67.8773 cm`
+- full 660f: `ATE RMSE = 2821.51 cm`
+- full cumulative accept at f_with_upd=650: `69.6594%`
+
+### Conclusion
+
+The blocking divergence is resolved for the stated success criteria:
+
+- Primary `< 500 cm`: passed by a large margin.
+- Stretch `< 5,000 cm`: passed with 2,821.5 cm.
+- LC parity `< 200 cm` full remains open. Remaining gap likely needs real
+  stereo/multi-camera MSCKF update or a stronger frontend, not more static-init
+  tuning.
